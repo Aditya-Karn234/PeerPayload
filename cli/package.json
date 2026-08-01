@@ -1,0 +1,13 @@
+{
+  "name": "orgxfer-cli",
+  "version": "1.0.0",
+  "private": true,
+  "description": "orgxfer command-line client: login, send, status, history against the org file-transfer backend.",
+  "bin": {
+    "orgxfer": "./src/index.js"
+  },
+  "dependencies": {
+    "client-core": "file:../client-core",
+    "commander": "^12.1.0"
+  }
+}

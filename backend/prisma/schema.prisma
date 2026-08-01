@@ -1,0 +1,132 @@
+generator client {
+  provider      = "prisma-client-js"
+  // "native" covers local dev (Windows). "debian-openssl-3.0.x" is what the
+  // Docker build actually needs — without it, `prisma generate` guesses a
+  // default engine target that doesn't match the bookworm-slim runtime
+  // image's OpenSSL version, and the container crashes on first query with
+  // "could not locate the Query Engine for runtime debian-openssl-3.0.x".
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Deactivate rather than delete — Transfer rows will reference users (added
+// in a later phase) and a hard delete would orphan audit history.
+model User {
+  id            String    @id @default(uuid())
+  username      String    @unique
+  passwordHash  String
+  role          String    @default("user") // "admin" | "user"
+  createdAt     DateTime  @default(now())
+  deactivatedAt DateTime?
+
+  // "Online" isn't a stored boolean — it's computed at read time as
+  // (lastHeartbeatAt > now() - presenceTtlMs), so a crashed client can
+  // never get stuck showing online forever without a cron sweep. address/
+  // port are only meaningful while that computed check is true; a stale
+  // pair from a previous session just won't be read once the TTL lapses.
+  lastHeartbeatAt DateTime?
+  presenceAddress String?
+  presencePort    Int?
+
+  sessions          Session[]
+  sentTransfers     Transfer[] @relation("sentTransfers")
+  receivedTransfers Transfer[] @relation("receivedTransfers")
+
+  @@map("users")
+}
+
+// One row per login. tokenHash is a SHA-256 of the raw bearer token — the
+// raw value is only ever returned once, at login; a fast deterministic hash
+// is fine here (unlike passwords) since the token itself is already
+// high-entropy random bytes, not something a dictionary attack helps with.
+// Revocation is immediate: requireAuth checks revokedAt/expiresAt on every
+// request rather than trusting a self-contained token like a JWT would.
+model Session {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// Org-tool architecture (see architecture.md): the backend never runs the
+// engine or sees file bytes — sender and receiver clients transfer directly
+// to each other, then each self-reports what happened. This table is that
+// audit trail, not a live transfer-progress store; there is deliberately no
+// Chunk table anymore (dropped — nothing populates per-chunk events without
+// the backend running the engine itself, and this scale doesn't warrant
+// that granularity in the first place).
+//
+// One row per POST /transfers call (a "transfer intent"). Usernames are
+// denormalized at creation for audit readability even if an account is
+// later renamed/deactivated.
+model Transfer {
+  id               String  @id @default(uuid())
+  senderId         String
+  receiverId       String
+  senderUsername   String
+  receiverUsername String
+
+  // The per-transfer engine shared secret (same kind of value the old
+  // single-machine Transfer.token field held) — stored in plain, not
+  // hashed: unlike a login session token (which only the holder ever
+  // presents again, and the server only ever verifies), BOTH the sender
+  // (at creation) and the receiver (at accept) need to read this back from
+  // the server, so a one-way hash can't work here. Exposure is bounded the
+  // same way every other Transfer field is: only returned to the sender/
+  // receiver/an admin via the existing ownership-checked routes, and
+  // deliberately left out of the general list/detail serialization —
+  // only the create and accept responses include it.
+  engineToken String
+
+  // pending -> (accepted -> in_progress -> complete|failed) | rejected |
+  // not_reachable | timed_out | cancelled. "not_reachable"/"timed_out" are
+  // distinct values (not folded into "failed") specifically so real
+  // deployment data on how often direct P2P connection fails is observable
+  // later — see architecture.md's relay-fallback trigger condition.
+  status String @default("pending")
+
+  fileCount  Int?
+  totalBytes BigInt?
+  failReason String?
+
+  // The receiver's address for THIS transfer, supplied at accept time —
+  // not the same as User.presenceAddress/Port, which is just "where to
+  // reach them to propose a transfer," not a fixed rendezvous point.
+  receiverAddress String?
+  receiverPort    Int?
+
+  // Populated by each side's local client after its own engine process
+  // exits. status/completedAt are finalized from the sender's report when
+  // present (mirrors the old sessionSourceFor sender-priority convention);
+  // the receiver's report is kept for cross-check only. Per architecture.md:
+  // this audit trail is honest but not tamper-proof — a client could simply
+  // not report, or report inaccurately, and the server has no independent
+  // way to verify it.
+  reportedBySender   Boolean @default(false)
+  reportedByReceiver Boolean @default(false)
+  senderReport       Json?
+  receiverReport     Json?
+
+  createdAt   DateTime  @default(now())
+  acceptedAt  DateTime?
+  completedAt DateTime?
+
+  sender   User @relation("sentTransfers", fields: [senderId], references: [id])
+  receiver User @relation("receivedTransfers", fields: [receiverId], references: [id])
+
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([status])
+  @@map("transfers")
+}

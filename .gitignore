@@ -1,0 +1,27 @@
+# Build output
+build/
+build-linux/
+out/
+cmake-build-*/
+
+# Docker Compose bind-mount for transfer source/dest files
+/data/
+
+# Transfer runtime artifacts
+transfer.state
+transfer.state.tmp
+received.txt
+
+# Editor / OS
+.vs/
+*.user
+Thumbs.db
+
+# Node / backend / frontend / desktop
+node_modules/
+backend/.env
+backend/dist/
+frontend/dist/
+desktop/dist/
+npm-debug.log*
+

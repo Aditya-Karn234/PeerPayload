@@ -1,0 +1,34 @@
+# Render Blueprint — deploys the org-tool backend + its Postgres database
+# together from one file (Render's "New Blueprint" flow reads this
+# automatically from the repo root).
+#
+# Only the backend is deployed here: it's pure HTTP + WebSocket (auth,
+# presence, directory, transfer-intent bookkeeping, socket.io signaling) —
+# it never spawns the engine or needs a raw TCP port, unlike the older
+# personal-tool backend. The actual file transfer happens directly between
+# the two desktop apps, which never touch Render at all.
+services:
+  - type: web
+    name: orgxfer-backend
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npx prisma generate
+    startCommand: npx prisma migrate deploy && npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: orgxfer-db
+          property: connectionString
+      # 30 days — matches config.js's own default; set explicitly here so
+      # it's visible/adjustable from the Render dashboard without a redeploy.
+      - key: SESSION_TTL_MS
+        value: "2592000000"
+      - key: PRESENCE_TTL_MS
+        value: "45000"
+
+databases:
+  - name: orgxfer-db
+    plan: free
+    databaseName: orgxfer
+    user: orgxfer

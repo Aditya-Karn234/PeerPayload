@@ -1,0 +1,38 @@
+appId: com.orgxfer.desktop
+productName: orgxfer
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+
+# electron-builder's auto-update only works with NSIS (.exe) on Windows and
+# AppImage on Linux — .msi (WiX) and .deb don't support electron-updater at
+# all. Settled decision: those two are the primary, auto-updating artifacts;
+# .msi/.deb would be secondary IT-deployable builds if ever needed, not
+# built here.
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Network
+
+# Generic HTTP provider, not GitHub/S3 — matches "reachable only on the
+# internal network/VPN, not the public internet." Points at wherever the
+# org actually hosts the update feed; this URL is a placeholder for that.
+publish:
+  provider: generic
+  url: https://updates.internal.example.com/orgxfer/

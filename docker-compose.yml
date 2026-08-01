@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dts_postgres
+    environment:
+      POSTGRES_USER: dts
+      POSTGRES_PASSWORD: dts_dev_password
+      POSTGRES_DB: transfers
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dts -d transfers"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: dts_backend
+    # The backend spawns sender/receiver as child processes; Node as
+    # container PID 1 doesn't reap their zombies once they exit (PID 1 has
+    # special kernel signal semantics no app runtime handles for free).
+    # Without an init process, finished children pile up as unkillable
+    # zombies and can eventually wedge `docker stop`/recreate entirely.
+    # `init: true` runs Docker's built-in tini as PID 1 instead, which does
+    # the reaping.
+    init: true
+    environment:
+      DATABASE_URL: postgresql://dts:dts_dev_password@postgres:5432/transfers
+      PORT: 4000
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Transfers read/write real files, which have to live somewhere inside
+      # the container's filesystem — this bind-mounts a host folder so
+      # sourcePath/destDir in POST /transfers can reference /data/... and
+      # the files are visible from outside the container too.
+      - ./data:/data
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: dts_frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
