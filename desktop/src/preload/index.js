@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld("peerpayload", {
   getTransfer: (id) => ipcRenderer.invoke("get-transfer", id),
   listDirectory: () => ipcRenderer.invoke("list-directory"),
 
-  pickFile: () => ipcRenderer.invoke("pick-file"),
+  pickFile: (mode) => ipcRenderer.invoke("pick-file", mode),
   send: (filePath, toUsername, chunkSize) => ipcRenderer.invoke("send", { filePath, toUsername, chunkSize }),
 
   acceptIncoming: (transferId) => ipcRenderer.invoke("accept-incoming", transferId),

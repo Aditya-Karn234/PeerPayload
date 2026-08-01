@@ -117,8 +117,8 @@ export default function Dashboard({ user, onLogout }) {
     [transfers],
   );
 
-  async function handlePickFile() {
-    const path = await window.peerpayload.pickFile();
+  async function handlePickFile(mode) {
+    const path = await window.peerpayload.pickFile(mode);
 
     if (path)
       setFilePath(path);
@@ -265,11 +265,19 @@ export default function Dashboard({ user, onLogout }) {
               />
               <button
                 type="button"
-                onClick={handlePickFile}
+                onClick={() => handlePickFile("file")}
                 className="shrink-0 rounded-md border px-3 py-2 text-sm"
                 style={{ borderColor: "var(--color-border)" }}
               >
-                Browse…
+                File…
+              </button>
+              <button
+                type="button"
+                onClick={() => handlePickFile("folder")}
+                className="shrink-0 rounded-md border px-3 py-2 text-sm"
+                style={{ borderColor: "var(--color-border)" }}
+              >
+                Folder…
               </button>
             </div>
           </label>

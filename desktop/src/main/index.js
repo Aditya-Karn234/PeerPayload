@@ -103,9 +103,13 @@ function registerIpcHandlers() {
   ipcMain.handle("get-transfer", (event, id) => getApiClient().getTransfer(id));
   ipcMain.handle("list-directory", () => getApiClient().listDirectory());
 
-  ipcMain.handle("pick-file", async () => {
+  // Windows/Linux can't combine "openFile" and "openDirectory" in one native
+  // dialog — Electron silently drops to directory-only mode if both are
+  // requested (macOS is the only platform that supports picking either).
+  // So the renderer asks for one mode at a time via two separate buttons.
+  ipcMain.handle("pick-file", async (event, mode) => {
     const result = await dialog.showOpenDialog(mainWindow, {
-      properties: ["openFile", "openDirectory"],
+      properties: [mode === "folder" ? "openDirectory" : "openFile"],
     });
 
     return result.canceled ? null : result.filePaths[0];
