@@ -15,7 +15,7 @@ export default defineConfig({
       alias: {
         "@": resolve("src/renderer/src"),
       },
-      // @orgxfer/ui is a symlinked local file: dependency (packages/ui) —
+      // @peerpayload/ui is a symlinked local file: dependency (packages/ui) —
       // preserveSymlinks + fs.allow keep Vite from treating its real path
       // (outside desktop/) as off-limits to serve during dev.
       preserveSymlinks: true,

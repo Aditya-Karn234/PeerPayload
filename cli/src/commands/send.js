@@ -91,7 +91,7 @@ function runSender({ host, port, token, transferId, chunkSize, filePath }, onEve
 
 async function sendCommand(filePath, options) {
   if (!tokenStore.get()) {
-    console.error("Not logged in. Run `orgxfer login` first.");
+    console.error("Not logged in. Run `peerpayload login` first.");
     process.exitCode = 1;
     return;
   }

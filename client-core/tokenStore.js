@@ -2,16 +2,17 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-// %APPDATA%\orgxfer\credentials.json on Windows, ~/.orgxfer/credentials.json
-// everywhere else — this is the CLI's default. Electron's main process
-// (Phase 4) provides a different implementation of this same {get, set,
-// clear} shape backed by the OS keychain instead, so callers (apiClient)
-// never need to know which one they're talking to.
+// %APPDATA%\peerpayload\credentials.json on Windows,
+// ~/.peerpayload/credentials.json everywhere else — this is the CLI's
+// default. Electron's main process (Phase 4) provides a different
+// implementation of this same {get, set, clear} shape backed by the OS
+// keychain instead, so callers (apiClient) never need to know which one
+// they're talking to.
 function defaultCredentialsPath() {
   if (process.platform === "win32" && process.env.APPDATA)
-    return path.join(process.env.APPDATA, "orgxfer", "credentials.json");
+    return path.join(process.env.APPDATA, "peerpayload", "credentials.json");
 
-  return path.join(os.homedir(), ".orgxfer", "credentials.json");
+  return path.join(os.homedir(), ".peerpayload", "credentials.json");
 }
 
 function createFileTokenStore(filePath = defaultCredentialsPath()) {

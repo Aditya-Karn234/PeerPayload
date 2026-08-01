@@ -6,7 +6,7 @@ import * as socketBus from "./socket";
 import { getApiClient } from "./apiClient";
 import { runReceive } from "./transferRunner";
 
-export const DOWNLOADS_DIR = path.join(os.homedir(), "Downloads", "orgxfer");
+export const DOWNLOADS_DIR = path.join(os.homedir(), "Downloads", "PeerPayload");
 
 let autoAccept = false;
 let sendToRenderer = null;
@@ -51,7 +51,7 @@ socketBus.events.on("incoming-transfer", (transfer) => {
     title: `${transfer.senderUsername} wants to send you a file`,
     body: transfer.fileCount
       ? `${transfer.fileCount} file(s), ${transfer.totalBytes ? Math.round(transfer.totalBytes / 1024 / 1024) : "?"} MB`
-      : "Open orgxfer to accept or decline.",
+      : "Open PeerPayload to accept or decline.",
   });
 
   notification.on("click", () => getMainWindow?.()?.show());

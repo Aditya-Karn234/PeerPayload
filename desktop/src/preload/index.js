@@ -12,7 +12,7 @@ function subscribe(channel, callback) {
   return () => ipcRenderer.removeListener(channel, handler);
 }
 
-contextBridge.exposeInMainWorld("orgxfer", {
+contextBridge.exposeInMainWorld("peerpayload", {
   login: (username, password) => ipcRenderer.invoke("login", { username, password }),
   logout: () => ipcRenderer.invoke("logout"),
   getMe: () => ipcRenderer.invoke("get-me"),

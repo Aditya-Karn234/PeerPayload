@@ -1,8 +1,8 @@
 {
-  "name": "orgxfer-desktop",
+  "name": "peerpayload-desktop",
   "version": "1.0.0",
   "private": true,
-  "description": "orgxfer desktop app: login, presence, recipient picker, and a background receive listener around the same engine/backend the CLI uses.",
+  "description": "PeerPayload desktop app: login, presence, recipient picker, and a background receive listener around the same engine/backend the CLI uses.",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -11,7 +11,7 @@
     "build:linux": "electron-vite build && electron-builder --linux"
   },
   "dependencies": {
-    "@orgxfer/ui": "file:../packages/ui",
+    "@peerpayload/ui": "file:../packages/ui",
     "@tailwindcss/vite": "^4.3.3",
     "client-core": "file:../client-core",
     "electron-updater": "^6.8.9",

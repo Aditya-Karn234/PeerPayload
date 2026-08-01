@@ -1,5 +1,5 @@
-appId: com.orgxfer.desktop
-productName: orgxfer
+appId: com.peerpayload.desktop
+productName: PeerPayload
 directories:
   output: dist
   buildResources: build
@@ -35,4 +35,4 @@ linux:
 # org actually hosts the update feed; this URL is a placeholder for that.
 publish:
   provider: generic
-  url: https://updates.internal.example.com/orgxfer/
+  url: https://updates.internal.example.com/peerpayload/

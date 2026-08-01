@@ -62,3 +62,22 @@ body {
   color: var(--color-ink);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
+
+/* <select>'s dropdown popup is rendered by the OS/Chromium natively, not
+   by this page's regular layout — it doesn't reliably inherit dark-mode
+   colors from `color-scheme` alone once the control itself has a
+   transparent background (the `bg-transparent` utility class used on every
+   select in this app), so the popped-open option list can end up
+   unreadable (e.g. light text on a light native background) even though
+   the closed control looks fine against the page. Overriding explicitly
+   here, at higher specificity than the utility class, fixes both the
+   closed control and the open option list consistently in both themes. */
+select {
+  background-color: var(--color-surface) !important;
+  color: var(--color-ink) !important;
+}
+
+select option {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+}

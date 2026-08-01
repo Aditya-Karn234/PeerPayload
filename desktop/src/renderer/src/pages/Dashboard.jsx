@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { StatTile, StatusBadge, ThemeToggle, TransferTable, Meter, formatBytes } from "@orgxfer/ui";
+import { StatTile, StatusBadge, ThemeToggle, TransferTable, Meter, formatBytes } from "@peerpayload/ui";
 
 const POLL_MS = 3000;
 const DIRECTORY_POLL_MS = 5000;
@@ -37,7 +37,7 @@ export default function Dashboard({ user, onLogout }) {
 
     async function poll() {
       try {
-        const data = await window.orgxfer.listTransfers();
+        const data = await window.peerpayload.listTransfers();
 
         if (!cancelled)
           setTransfers(data);
@@ -61,7 +61,7 @@ export default function Dashboard({ user, onLogout }) {
 
     async function poll() {
       try {
-        const data = await window.orgxfer.listDirectory();
+        const data = await window.peerpayload.listDirectory();
 
         if (!cancelled)
           setDirectory(data.filter((u) => u.username !== user.username));
@@ -81,12 +81,12 @@ export default function Dashboard({ user, onLogout }) {
   }, [user.username]);
 
   useEffect(() => {
-    window.orgxfer.getAutoAccept().then(setAutoAccept);
+    window.peerpayload.getAutoAccept().then(setAutoAccept);
   }, []);
 
   useEffect(
     () =>
-      window.orgxfer.onIncomingTransfer((transfer) => {
+      window.peerpayload.onIncomingTransfer((transfer) => {
         setIncoming(transfer);
       }),
     [],
@@ -94,7 +94,7 @@ export default function Dashboard({ user, onLogout }) {
 
   useEffect(
     () =>
-      window.orgxfer.onProgress((progress) => {
+      window.peerpayload.onProgress((progress) => {
         if (incoming && progress.transferId === incoming.id) {
           setReceiveState(progress);
 
@@ -118,7 +118,7 @@ export default function Dashboard({ user, onLogout }) {
   );
 
   async function handlePickFile() {
-    const path = await window.orgxfer.pickFile();
+    const path = await window.peerpayload.pickFile();
 
     if (path)
       setFilePath(path);
@@ -130,7 +130,7 @@ export default function Dashboard({ user, onLogout }) {
     setSendState({ phase: "starting" });
 
     try {
-      await window.orgxfer.send(filePath, toUsername, chunkSize || undefined);
+      await window.peerpayload.send(filePath, toUsername, chunkSize || undefined);
       setFilePath("");
       setToUsername("");
     } catch (err) {
@@ -147,9 +147,9 @@ export default function Dashboard({ user, onLogout }) {
 
     try {
       if (accept)
-        await window.orgxfer.acceptIncoming(incoming.id);
+        await window.peerpayload.acceptIncoming(incoming.id);
       else {
-        await window.orgxfer.rejectIncoming(incoming.id);
+        await window.peerpayload.rejectIncoming(incoming.id);
         setIncoming(null);
       }
     } finally {
@@ -160,12 +160,12 @@ export default function Dashboard({ user, onLogout }) {
   async function handleToggleAutoAccept() {
     const next = !autoAccept;
 
-    await window.orgxfer.setAutoAccept(next);
+    await window.peerpayload.setAutoAccept(next);
     setAutoAccept(next);
   }
 
   async function handleLogout() {
-    await window.orgxfer.logout();
+    await window.peerpayload.logout();
     onLogout();
   }
 
@@ -173,7 +173,7 @@ export default function Dashboard({ user, onLogout }) {
     <div className="mx-auto max-w-4xl px-4 py-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold">orgxfer</h1>
+          <h1 className="text-lg font-semibold">PeerPayload</h1>
           <p className="text-xs" style={{ color: "var(--color-ink-muted)" }}>
             Signed in as {user.username}
           </p>

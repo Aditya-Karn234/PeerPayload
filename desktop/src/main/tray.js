@@ -11,11 +11,11 @@ const ICON_DATA_URL =
 export function createTray({ onOpen, onQuit, onToggleAutoAccept, getAutoAccept }) {
   tray = new Tray(nativeImage.createFromDataURL(ICON_DATA_URL));
 
-  tray.setToolTip("orgxfer");
+  tray.setToolTip("PeerPayload");
 
   function rebuildMenu() {
     const menu = Menu.buildFromTemplate([
-      { label: "Open orgxfer", click: onOpen },
+      { label: "Open PeerPayload", click: onOpen },
       { type: "separator" },
       {
         label: "Auto-accept incoming transfers",

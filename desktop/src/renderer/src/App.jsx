@@ -10,10 +10,10 @@ export default function App() {
   const [user, setUser] = useState(undefined); // undefined = still checking, null = logged out
 
   useEffect(() => {
-    window.orgxfer.getMe().then(setUser);
+    window.peerpayload.getMe().then(setUser);
   }, []);
 
-  useEffect(() => window.orgxfer.onSessionRevoked(() => setUser(null)), []);
+  useEffect(() => window.peerpayload.onSessionRevoked(() => setUser(null)), []);
 
   if (user === undefined) {
     return (

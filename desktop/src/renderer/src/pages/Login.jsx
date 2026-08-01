@@ -12,7 +12,7 @@ export default function Login({ onLogin }) {
     setError(null);
 
     try {
-      const user = await window.orgxfer.login(username, password);
+      const user = await window.peerpayload.login(username, password);
 
       onLogin(user);
     } catch (err) {
@@ -28,7 +28,7 @@ export default function Login({ onLogin }) {
         className="w-80 rounded-lg border p-6"
         style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
       >
-        <h1 className="text-base font-semibold">orgxfer</h1>
+        <h1 className="text-base font-semibold">PeerPayload</h1>
         <p className="mt-1 text-xs" style={{ color: "var(--color-ink-muted)" }}>
           Sign in with your org account.
         </p>

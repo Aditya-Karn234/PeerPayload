@@ -10,7 +10,7 @@ const { historyCommand } = require("./commands/history");
 const program = new Command();
 
 program
-  .name("orgxfer")
+  .name("peerpayload")
   .description("Send files directly to a colleague's machine — auth/presence through the org backend, the transfer itself stays direct between the two of you.");
 
 program

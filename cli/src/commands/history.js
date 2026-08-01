@@ -9,7 +9,7 @@ async function historyCommand(options) {
       if (options.json)
         printJson({ error: "not logged in" });
       else
-        console.error("Not logged in. Run `orgxfer login` first.");
+        console.error("Not logged in. Run `peerpayload login` first.");
 
       process.exitCode = 1;
       return;
