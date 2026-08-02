@@ -1,91 +1,110 @@
-# data-transfer-sys
+# PeerPayload
 
-A file transfer engine written in C++ (TLS-encrypted, resumable, pipelined
-for throughput) wrapped in a full-stack dashboard: a Node/Express API with
-Postgres persistence, and a React frontend with live progress over
-WebSocket.
+Send a file directly to a colleague's machine. Log in, pick their name from
+a list of who's online, and the transfer runs straight between the two of
+you — the file's bytes never pass through a server. A small backend only
+handles accounts, presence ("who's online right now"), and an audit trail
+of what was sent, to whom, and whether it finished.
 
-The engine works standalone as two CLI binaries (`sender`, `receiver`). The
-rest of the stack turns it into something you drive from a browser instead
-of a terminal.
+Two ways to use it, sharing one implementation underneath:
+
+- **Desktop app** (Electron + React) — install it, sign in, pick a
+  colleague, send. Runs in the system tray so it can receive files in the
+  background.
+- **CLI** (`peerpayload`) — `login`, `send`, `status`, `history`. Send-only:
+  receiving still needs someone's desktop app running on the other end.
+
+The C++ transfer engine underneath (`sender`/`receiver`) also works as a
+fully standalone pair of CLI binaries with no account system at all — see
+[How the engine works](#how-the-engine-works).
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    Browser -->|http :8080| Frontend["Frontend<br/>React + nginx"]
-    Frontend -->|"/api/*, /socket.io/*"| Backend["Backend<br/>Express + socket.io<br/>:4000"]
-    Backend -->|spawns subprocess| Sender["sender<br/>C++ engine"]
-    Backend -->|spawns subprocess| Receiver["receiver<br/>C++ engine"]
-    Sender <-->|"TCP + TLS 1.3<br/>chunked, SHA-256 per chunk"| Receiver
-    Sender -.->|JSON events on stdout| Backend
-    Receiver -.->|JSON events on stdout| Backend
-    Backend --> Postgres[("Postgres<br/>transfers, chunks")]
-    Backend -.->|live progress| Frontend
+    A["Alice — desktop app or CLI"] -->|"REST: login, resolve recipient,<br/>create transfer intent"| Backend
+    B["Bob — desktop app"] -->|"REST + WebSocket:<br/>heartbeat, accept/reject"| Backend
+    Backend["Backend<br/>Express + socket.io<br/>deployed on Render"]
+    Backend --> Postgres[("Postgres<br/>users, sessions, transfers (audit only)")]
+    Backend -.->|"push: incoming-transfer"| B
+    A ==>|spawns| SenderProc["sender<br/>C++ engine"]
+    B ==>|spawns| ReceiverProc["receiver<br/>C++ engine"]
+    SenderProc <-->|"direct TCP + TLS 1.3, chunked,<br/>SHA-256 per chunk — file bytes<br/>never touch the backend"| ReceiverProc
 ```
 
-Every layer only talks to the one next to it:
+This is a **control plane / data plane split**:
 
-- **Frontend** never calls the engine or the database directly — everything
-  goes through the backend's REST API and one WebSocket connection.
-- **Backend** never links against the engine or speaks its wire protocol.
-  It spawns `sender`/`receiver` as subprocesses and reads **one
-  newline-delimited JSON object per event** off their stdout — that's the
-  entire bridge. No socket, no shared memory, no IPC beyond a pipe.
-- **Engine** (`sender`/`receiver`) has no idea a backend exists. It's a
-  standalone CLI tool with its own resumable, TLS-encrypted, pipelined
-  chunk-transfer protocol; the JSON event stream is just how it reports
-  progress to whatever spawned it.
+- **Control plane** (through the backend): who you are, who's online, and
+  "does Bob want this file" — a REST API for everything except the live
+  push notification, which goes over an authenticated per-user socket.io
+  channel (`user:<id>` room).
+- **Data plane** (direct, client-to-client): once Bob accepts, his client
+  spawns `receiver`, Alice's client spawns `sender`, and the two connect
+  to each other directly over TLS. The backend is never in this path and
+  never sees file contents — only a final self-reported "it worked" or
+  "it failed" for the audit log.
 
-### Why JSON-over-stdout instead of a socket/HTTP endpoint in the engine
+### Components
 
-The alternative would be giving the C++ binaries their own HTTP or RPC
-server so the backend could poll or subscribe to them directly. That adds
-a second protocol, a second port to manage, and couples the engine's
-lifecycle to always running as a server. Reading structured lines off
-stdout of a process you already spawned and already have a handle to is
-simpler in every direction: no extra listening port, no discovery problem,
-and the engine stays a plain CLI tool that works identically whether a
-backend is driving it or a person is running it by hand in a terminal.
+| Path | What it is |
+|---|---|
+| `sender/`, `receiver/`, `shared/` | The C++ engine — TLS, resumable, pipelined chunk transfer. No knowledge of accounts, backend, or either client. |
+| `backend/` | Express + Prisma/Postgres + socket.io. Auth (bearer tokens, DB-backed sessions so admin revocation is immediate), presence (heartbeat + TTL), directory lookup, and transfer audit records. Deployed on Render. |
+| `client-core/` | The one client-side implementation of "talk to the backend" and "spawn the engine and read its JSON event stream" — shared by both `desktop/` and `cli/` so there's exactly one copy of that logic. |
+| `desktop/` | Electron + React. `electron-builder` produces a Windows installer (NSIS) and a Linux AppImage. |
+| `cli/` | `peerpayload` — commander-based, `login`/`send`/`status`/`history`. |
+| `packages/ui/` | Presentational React components (`Meter`, `StatTile`, `StatusBadge`, `ThemeToggle`) shared between `desktop/` and (originally) `frontend/`. |
+| `frontend/` | **Legacy.** A React dashboard from before the accounts/presence rework — still assumes the old no-auth, manual host/port/token model and does not speak the current backend's API. Not part of the working system; kept in the repo but not wired up. |
+| `render.yaml` | Render Blueprint — deploys `backend/` and its Postgres together from one file. |
 
-## Running it
+## Using it
 
-Requires Docker and Docker Compose.
+The backend is already deployed; the client apps have its URL baked in at
+build time, so there's no server address to configure.
+
+**Desktop app:** install the built package for your platform, sign in with
+an account an admin created for you, and send. Receiving requires the app
+to be running (it can be minimized to the tray — closing the window
+doesn't quit it).
+
+**CLI:**
 
 ```sh
-docker compose up -d --build
+peerpayload login
+peerpayload send "C:\path\to\file-or-folder" --to someusername
+peerpayload status    # active transfers
+peerpayload history   # everything
 ```
 
-Then open **http://localhost:8080**.
+Add `--json` to any command for machine-readable output.
 
-Files you want to transfer need to be visible inside the containers.
-`docker-compose.yml` bind-mounts `./data` (next to this file) into the
-backend at `/data` — drop files there and reference them as `/data/...`
-in the "new transfer" form (e.g. source `/data/myfile.bin`, destination
-`/data/out`).
+### Accounts
 
-First startup runs pending Prisma migrations automatically
-(`backend/docker-entrypoint.sh`) — no manual database setup needed.
-
-### Running the engine standalone (no Docker, no backend)
+There's no self-registration. The first admin account is created directly
+against the database:
 
 ```sh
-# terminal 1
-receiver -p 8080 -o ./received
-
-# terminal 2
-sender -p 8080 ./some-file-or-directory
+cd backend
+node src/scripts/createAdmin.js <username> <password>
 ```
 
-Both take `--help` for the full flag list. The ones worth knowing:
+From there, an admin creates everyone else's accounts through the `users`
+API.
 
-| Flag | Applies to | What it does |
-|---|---|---|
-| `--chunk-size <bytes>` | sender | Bytes per chunk (default 64 KiB, range 4 KiB–8 MiB). Bigger chunks mean fewer round trips — see the performance section. |
-| `--window <n>` | sender | Chunks allowed in flight at once before waiting for an ack (default 16). |
-| `--bench <path>` | sender | Writes per-chunk stage timings (disk read / hash / send / ack) to a CSV. |
-| `--no-tls` | both | Skips the TLS handshake. Debug/benchmark only — both sides must set it, or the connection fails. |
-| `--transfer-id <id>` | both | Tags every emitted JSON event; the backend uses this to correlate a sender/receiver pair to one database row. |
+### Running the backend locally
+
+```sh
+cd backend
+cp .env.example .env   # point DATABASE_URL at a local Postgres
+npm install
+npx prisma migrate dev
+npm run dev
+```
+
+Point a client at it instead of the deployed backend with
+`PEERPAYLOAD_SERVER=http://localhost:4000` (both the desktop app's dev
+build and the CLI read this env var; the desktop app's `electron-builder`
+config bakes in the production URL for a packaged install instead).
 
 ## How the engine works
 
@@ -119,6 +138,27 @@ Both take `--help` for the full flag list. The ones worth knowing:
   byte stream, so this mostly catches logic bugs, not routine transit
   noise.
 
+### Running the engine standalone (no accounts, no backend)
+
+```sh
+# terminal 1
+receiver -p 8080 -o ./received
+
+# terminal 2
+sender -p 8080 ./some-file-or-directory
+```
+
+Both take `--help` for the full flag list. The ones worth knowing:
+
+| Flag | Applies to | What it does |
+|---|---|---|
+| `--chunk-size <bytes>` | sender | Bytes per chunk (default 64 KiB, range 4 KiB–8 MiB). Bigger chunks mean fewer round trips — see the performance section. |
+| `--window <n>` | sender | Chunks allowed in flight at once before waiting for an ack (default 16). |
+| `--bench <path>` | sender | Writes per-chunk stage timings (disk read / hash / send / ack) to a CSV. |
+| `--no-tls` | both | Skips the TLS handshake. Debug/benchmark only — both sides must set it, or the connection fails. |
+| `--token <token>` | both | Shared-secret handshake auth. This is what a transfer intent's `engineToken` fills in automatically when the engine is spawned by the desktop app or CLI. |
+| `--transfer-id <id>` | both | Tags every emitted JSON event; callers use this to correlate a sender/receiver pair to one transfer record. |
+
 ## Performance
 
 Replacing stop-and-wait chunk transfer with the sliding-window pipeline
@@ -147,26 +187,33 @@ published report:
 Reproduce it with `tools/benchmark.ps1` — see the script's own header
 comment for why latency is simulated with a small TCP proxy
 (`tools/latency-proxy.js`) rather than a `Sleep()` inside the receiver.
+(That harness predates the accounts/presence rework and drives the engine
+directly, standalone — it isn't affected by anything above it.)
 
 ## Known limitations / out of scope
 
-These are deliberate, not oversights:
+Some deliberate, some just not built yet:
 
-- **No authentication.** Neither the dashboard nor the API has a login —
-  anyone who can reach the backend can start, view, or cancel transfers.
-  Fine for local/demo use; would need real auth before exposing this
-  anywhere untrusted.
+- **No self-registration or SSO.** Accounts are admin-created only
+  (`createAdmin.js` bootstraps the first one).
+- **No relay fallback.** If two machines can't reach each other directly
+  (NAT/firewall), the transfer just fails — `not_reachable`/connection
+  failure are recorded as distinct statuses so this is at least
+  observable, but nothing routes around it. Deliberately deferred until
+  real usage data shows how often it's actually needed.
+- **The audit trail is client-self-reported, not tamper-proof.** Both
+  sides report their own outcome after a transfer; the sender's report
+  wins if they disagree. Fine for "did this generally work," not a
+  cryptographic guarantee.
 - **TLS is confidentiality, not identity.** See the self-signed
-  certificate note above — no MITM protection on first connection.
-- **No secrets management.** The Postgres password in `docker-compose.yml`
-  is a hardcoded dev default. Fine for local use; would need real secret
-  injection for actual production deployment.
-- **One process per transfer, not one process handling many.** The
-  backend spawns a fresh `sender`/`receiver` pair per transfer rather than
-  one long-running engine process multiplexing several sessions. This
-  already gives real OS-level concurrency (multiple transfers just run as
-  multiple process pairs) without needing an async I/O rewrite — revisit
-  only if process-spawn overhead is ever actually measured as a problem.
+  certificate note above — no MITM protection on the first connection to
+  a given receiver process, and no pinning across runs.
+- **`frontend/` is stale and not part of the working system** — see the
+  Components table above.
+- **Render's free tier cold-starts** after ~15 minutes idle, adding
+  30–50s of latency to the first request after a quiet period. A
+  heartbeat can report "online" before the signaling socket that actually
+  delivers the incoming-transfer push has finished reconnecting.
 - **No `htonl`/`ntohl` byte-order handling on the wire protocol.** Every
   platform this currently runs on (Windows and Linux, both x86-64) is
   little-endian, so this is a real gap only for a future big-endian
@@ -175,15 +222,20 @@ These are deliberate, not oversights:
   aren't the bottleneck (see [Performance](#performance)), so the
   optimization `TransmitFile`/`sendfile` would provide isn't where the
   time actually goes.
-- **No CI.** Nothing builds or tests these images automatically on push.
+- **No CI.** Nothing builds or tests these automatically on push.
 
 ## Project layout
 
 ```
-sender/, receiver/   the two CLI binaries (C++)
-shared/               protocol, TLS, hashing, and pipeline code shared by both
-backend/              Express API + Prisma/Postgres + socket.io
-frontend/             React dashboard (Vite + Tailwind)
-tools/                benchmark harness, latency proxy, bench-log analysis
-docker-compose.yml    the whole stack
+sender/, receiver/    the two CLI binaries (C++)
+shared/                protocol, TLS, hashing, and pipeline code shared by both
+backend/               Express API + Prisma/Postgres + socket.io — auth, presence, directory, audit
+client-core/           shared client logic (API calls, engine spawning) used by desktop/ and cli/
+desktop/               Electron + React desktop app
+cli/                   peerpayload command-line client
+packages/ui/           shared presentational React components
+frontend/              legacy web dashboard — not wired to the current backend, see Known limitations
+render.yaml            Render Blueprint (backend + Postgres)
+tools/                 benchmark harness, latency proxy, bench-log analysis
+docker-compose.yml     local Postgres + the old standalone backend/frontend pair (see frontend/ note)
 ```
