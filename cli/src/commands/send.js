@@ -7,7 +7,11 @@ const config = require("../config");
 const { printJson } = require("../output");
 
 const POLL_INTERVAL_MS = 1000;
-const ACCEPT_TIMEOUT_MS = 30_000;
+// 90s, not 30s — a human has to notice a notification and click it, and the
+// free-tier backend can take 30-50s to cold-start after being idle, during
+// which the heartbeat-based "online" check can pass well before the actual
+// signaling socket has finished reconnecting.
+const ACCEPT_TIMEOUT_MS = 90_000;
 
 function collectFileStats(targetPath) {
   const stat = fs.statSync(targetPath);
@@ -116,7 +120,22 @@ async function sendCommand(filePath, options) {
     if (!options.json)
       console.log(`Waiting for ${options.to} to accept...`);
 
-    const accepted = await waitForAcceptance(intent.id);
+    let accepted;
+
+    try {
+      accepted = await waitForAcceptance(intent.id);
+    } catch (err) {
+      // Without this, a timed-out/never-accepted intent is left "pending" in
+      // the database forever — it can't ever complete (this sender has
+      // already given up and never spawns sender.exe), so it just clutters
+      // history. Best-effort: if even this report fails, the original
+      // error is still what the user sees.
+      await api
+        .postTransferReport(intent.id, { role: "sender", status: "failed", fileCount, totalBytes, failReason: err.message })
+        .catch(() => {});
+
+      throw err;
+    }
 
     if (!options.json)
       console.log(`Accepted. Sending to ${accepted.receiverAddress}:${accepted.receiverPort}...`);
