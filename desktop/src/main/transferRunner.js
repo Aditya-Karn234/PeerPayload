@@ -191,7 +191,8 @@ export async function runReceive({ transferId, outputDir }, onProgress) {
   ];
 
   let listeningResolve;
-  const listening = new Promise((resolve) => { listeningResolve = resolve; });
+  let listeningReject;
+  const listening = new Promise((resolve, reject) => { listeningResolve = resolve; listeningReject = reject; });
 
   const finishedPromise = runEngineProcess(config.receiverPath, args, (event) => {
     if (event.event === "listening")
@@ -199,6 +200,14 @@ export async function runReceive({ transferId, outputDir }, onProgress) {
 
     onProgress({ phase: "receiving", transferId, event });
   });
+
+  // If the engine never gets to "listening" (fails to spawn, exits early,
+  // etc.), finishedPromise rejects/resolves without listeningResolve ever
+  // firing — without this, "await listening" below just hangs forever
+  // instead of surfacing the failure (a real bug: the UI was stuck on
+  // "Starting receiver..." indefinitely when the engine binary was
+  // missing). No-op if listening already settled.
+  finishedPromise.catch((err) => listeningReject(err));
 
   await listening;
 

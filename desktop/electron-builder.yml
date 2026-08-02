@@ -8,6 +8,17 @@ files:
   - out/**/*
   - package.json
 
+# The C++ transfer engine binaries — sender.exe/receiver.exe are what
+# actually move file bytes; without these bundled in, the installed app has
+# nothing to spawn (config.js's dev-mode relative path only resolves inside
+# a repo checkout, which an end user's machine never has). Landed in
+# resources/engine/, read via process.resourcesPath in config.js.
+extraResources:
+  - from: ../build/sender/sender.exe
+    to: engine/sender.exe
+  - from: ../build/receiver/receiver.exe
+    to: engine/receiver.exe
+
 # electron-builder's auto-update only works with NSIS (.exe) on Windows and
 # AppImage on Linux — .msi (WiX) and .deb don't support electron-updater at
 # all. Settled decision: those two are the primary, auto-updating artifacts;
