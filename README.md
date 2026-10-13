@@ -190,6 +190,42 @@ comment for why latency is simulated with a small TCP proxy
 (That harness predates the accounts/presence rework and drives the engine
 directly, standalone — it isn't affected by anything above it.)
 
+## Tests and diagnostics
+
+Engine tests drive the real `sender`/`receiver` binaries over their JSON
+event stream, the same surface the desktop app and CLI use. Build the
+engine first; there are no npm dependencies:
+
+```sh
+node --test "tests/engine/*.test.js"
+```
+
+| Suite | Covers |
+|---|---|
+| `integrity.test.js` | Byte-identical output across empty/1-byte/chunk-boundary files, every chunk size 4 KiB–8 MiB, window sizes, TLS and plaintext, nested/unicode directories, multiple sources, and truncation of a stale longer destination file. |
+| `resume.test.js` | Link dropped mid-transfer (TLS and plaintext), receiver or sender process killed, repeated interruptions, partially finished directories, plus the cases that must restart from chunk 0 instead of resuming: changed file size, changed `--chunk-size`, deleted partial file, garbage or out-of-range `transfer.state`. |
+| `failure-injection.test.js` | No receiver, wrong or missing token, TLS/plaintext mismatch, port scans and garbage bytes (receiver must keep listening), invalid input, injected chunk corruption (`DTS_CORRUPT_CHUNK`), bit flips on the wire via a fault proxy, and a hostile raw-protocol sender: bad handshake fields, path traversal, out-of-order/oversized/missing chunks, wrong hashes. |
+
+Tests marked `todo` document known engine bugs (see
+[Known limitations](#known-limitations--out-of-scope)). They run and
+report, but don't fail the suite. Point the tests at a different build
+with `ENGINE_SENDER_PATH` / `ENGINE_RECEIVER_PATH`.
+
+When a transfer won't work on a particular machine, run the diagnostic:
+
+```sh
+node tools/diagnose.js                         # engine, loopback TLS transfer, network, backend, login
+node tools/diagnose.js --peer 10.0.0.12:52011  # also test reaching a peer's receiver port
+node tools/diagnose.js --offline --json        # skip backend checks; machine-readable output
+```
+
+It checks that the engine binaries load (a missing DLL makes them exit
+silently), runs a real loopback TLS transfer and verifies its SHA-256,
+lists the LAN address the desktop app will advertise, checks the backend's
+`/health` and whether the stored CLI login is still valid, and lists
+interrupted transfers waiting to resume. It never prints the stored token.
+It exits 1 if any check fails.
+
 ## Known limitations / out of scope
 
 Some deliberate, some just not built yet:
@@ -222,6 +258,16 @@ Some deliberate, some just not built yet:
   aren't the bottleneck (see [Performance](#performance)), so the
   optimization `TransmitFile`/`sendfile` would provide isn't where the
   time actually goes.
+- **Resume doesn't fingerprint file content.** A resume is allowed when
+  the file size and chunk size match. If the source file is edited between
+  runs but stays the same size, resume splices old and new bytes into a
+  corrupted file and still reports success. Covered by a `todo` test in
+  `resume.test.js`.
+- **The receiver never exits after a non-retryable local error.** For
+  example, when the output directory can't be created, it emits
+  `transfer_failed` and then keeps listening, because the accept loop only
+  exits once a session is accepted. Covered by a `todo` test in
+  `failure-injection.test.js`.
 - **No CI.** Nothing builds or tests these automatically on push.
 
 ## Project layout
