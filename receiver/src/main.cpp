@@ -642,15 +642,17 @@ void rejectSession(
     transportSendStruct(transport, ack);
 }
 
-// sessionAccepted (out param, caller pre-sets false): becomes true once this
+// sessionFinal (out param, caller pre-sets false): becomes true once this
 // connection has passed every handshake check and this receiver has
-// committed to it — from that point, whatever runSession returns is this
-// process's final word, not something the caller should retry past.
+// committed to it, or once a non-retryable local failure means every
+// future connection would fail the same way — from that point, whatever
+// runSession returns is this process's final word, not something the
+// caller should retry past.
 bool runSession(
     const Transport &transport,
     const std::string &transferId,
     const Options &options,
-    bool &sessionAccepted)
+    bool &sessionFinal)
 {
     SessionHeader session{};
 
@@ -758,13 +760,14 @@ bool runSession(
             "session_local_error",
             "Cannot create the output directory",
             false);
+        sessionFinal = true;
         return false;
     }
 
     // Every handshake check passed — this session is happening. Anything
     // that goes wrong from here is a real failure to report, not noise to
     // shrug off and keep listening past.
-    sessionAccepted = true;
+    sessionFinal = true;
 
     SessionAck ack{};
 
@@ -870,7 +873,7 @@ int main(int argc, char **argv)
         .emit();
 
     // Keeps accepting connections until one actually becomes a session this
-    // receiver commits to (sessionAccepted) or something local and
+    // receiver commits to (sessionFinal) or something local and
     // non-peer-dependent breaks. An exposed port gets scanned, health-
     // checked, and occasionally hit by a sender with the wrong token —
     // none of that should require the operator to notice and manually
@@ -910,7 +913,7 @@ int main(int argc, char **argv)
 
         SSL_CTX *tlsCtx = nullptr;
         SSL *tlsConn = nullptr;
-        bool sessionAccepted = false;
+        bool sessionFinal = false;
         bool ok = false;
 
         if (!options.noTls)
@@ -950,7 +953,7 @@ int main(int argc, char **argv)
         {
             Transport transport{client, tlsConn};
 
-            ok = runSession(transport, transferId, options, sessionAccepted);
+            ok = runSession(transport, transferId, options, sessionFinal);
         }
 
         if (tlsConn)
@@ -961,7 +964,7 @@ int main(int argc, char **argv)
 
         closesocket(client);
 
-        if (sessionAccepted)
+        if (sessionFinal)
         {
             closesocket(listener);
             platformSocketCleanup();

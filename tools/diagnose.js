@@ -304,7 +304,9 @@ function checkPendingResume() {
     }
     console.log(`\n${failed ? `${failed} failed` : "no failures"}${warned ? `, ${warned} warning(s)` : ""}`);
   }
-  process.exit(failed ? 1 : 0);
+  // exitCode rather than process.exit(): exiting while fetch's sockets are
+  // still closing trips a libuv assertion on Windows (exit 127).
+  process.exitCode = failed ? 1 : 0;
 })();
 
 function parseArgs(argv) {

@@ -161,12 +161,9 @@ test("failure: invalid sender input is rejected before connecting", async () => 
   }
 });
 
-// Known bug: rejectSession(..., retryable=false) emits transfer_failed but
-// never sets sessionAccepted, so the receiver's accept loop keeps running —
-// it reports failure yet never exits, contrary to the comment on
-// rejectSession. Marked todo until the receiver exits on non-retryable
-// rejections.
-test("failure: unusable output directory is a reported, non-retryable failure", { todo: "receiver keeps listening after a non-retryable session_local_error" }, async (t) => {
+// The receiver must exit here rather than keep listening: every future
+// connection would hit the same local error.
+test("failure: unusable output directory is a reported, non-retryable failure", async (t) => {
   const { srcDir } = setup(t);
   // A regular file where the output directory should be.
   const blocker = path.join(srcDir, "not-a-dir");

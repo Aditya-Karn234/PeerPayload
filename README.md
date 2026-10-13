@@ -263,11 +263,6 @@ Some deliberate, some just not built yet:
   runs but stays the same size, resume splices old and new bytes into a
   corrupted file and still reports success. Covered by a `todo` test in
   `resume.test.js`.
-- **The receiver never exits after a non-retryable local error.** For
-  example, when the output directory can't be created, it emits
-  `transfer_failed` and then keeps listening, because the accept loop only
-  exits once a session is accepted. Covered by a `todo` test in
-  `failure-injection.test.js`.
 - **No CI.** Nothing builds or tests these automatically on push.
 
 ## Project layout
