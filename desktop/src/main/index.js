@@ -131,11 +131,17 @@ function registerIpcHandlers() {
 app.whenReady().then(() => {
   receiveListener.init({ onSendToRenderer: sendToRenderer, onGetMainWindow: getMainWindow });
 
-  socketBus.events.on("session-revoked", async () => {
+  const forceLogout = async () => {
     await exitSession();
     getTokenStore().clear();
     sendToRenderer("session-revoked");
-  });
+  };
+
+  socketBus.events.on("session-revoked", forceLogout);
+
+  // The server refused the socket's token: the session expired or was
+  // revoked while this app wasn't connected to hear the push about it.
+  socketBus.events.on("unauthorized", forceLogout);
 
   registerIpcHandlers();
   createWindow();

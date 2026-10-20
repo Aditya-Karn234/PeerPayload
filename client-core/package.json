@@ -8,6 +8,7 @@
     ".": "./index.js",
     "./apiClient": "./apiClient.js",
     "./engine": "./engine.js",
-    "./tokenStore": "./tokenStore.js"
+    "./tokenStore": "./tokenStore.js",
+    "./transferPolicy": "./transferPolicy.js"
   }
 }

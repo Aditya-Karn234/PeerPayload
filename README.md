@@ -120,12 +120,24 @@ config bakes in the production URL for a packaged install instead).
   sender, with a separate thread reading acks) instead of the naive
   send-one-wait-for-its-ack-send-next approach. See
   [Performance](#performance) for what this actually bought.
-- **Encrypted.** TLS 1.3 by default. The receiver generates a fresh
-  self-signed certificate on every start — this protects the transfer
-  against passive eavesdropping on the wire, but **not** against an active
-  machine-in-the-middle on the very first connection to a given receiver,
-  since there's no trust anchor to check the certificate against. There's
-  no certificate pinning across runs.
+- **Encrypted and pinned.** TLS 1.3 by default. The receiver generates one
+  self-signed certificate per run and publishes its SHA-256 fingerprint in
+  its `listening` event. The apps send that fingerprint to the backend when
+  accepting, and the sender passes it to `--pin-sha256`, so it refuses any
+  other certificate: a machine-in-the-middle can't stand in for the
+  receiver. Run standalone without `--pin-sha256`, the sender accepts any
+  certificate (encryption only, no receiver authentication).
+- **Fails instead of hanging.** Every send/recv has an idle timeout
+  (`--idle-timeout`, default 120 s), so a peer that vanishes without
+  closing the connection (sleep, Wi-Fi or VPN drop) ends the session with
+  `peer_timeout` instead of blocking forever. TCP keepalive is on, so NAT
+  state isn't expired mid-transfer.
+- **Resumes automatically under the apps.** The apps start the receiver
+  with `--max-retries 3 --listen-timeout 120`: after a network failure it
+  keeps listening (emitting `session_failed`, not `transfer_failed`) with
+  its resume state saved, and the desktop app or CLI re-runs the sender,
+  which picks up from the last durable chunk. The retry policy lives in
+  `client-core/transferPolicy.js`.
 - **Cross-platform.** The same source builds and runs natively on Windows
   and Linux; sender and receiver interoperate in either direction
   regardless of which platform each side is running on.
@@ -158,6 +170,10 @@ Both take `--help` for the full flag list. The ones worth knowing:
 | `--no-tls` | both | Skips the TLS handshake. Debug/benchmark only — both sides must set it, or the connection fails. |
 | `--token <token>` | both | Shared-secret handshake auth. This is what a transfer intent's `engineToken` fills in automatically when the engine is spawned by the desktop app or CLI. |
 | `--transfer-id <id>` | both | Tags every emitted JSON event; callers use this to correlate a sender/receiver pair to one transfer record. |
+| `--idle-timeout <sec>` | both | Give up when the peer is silent this long on any single send/recv (default 120, `0` = never). The failure reason is `peer_timeout`. |
+| `--pin-sha256 <hex>` | sender | Refuse the receiver unless its certificate's SHA-256 matches (the `certSha256` from the receiver's `listening` event). Fails with `tls_pin_mismatch`. |
+| `--max-retries <n>` | receiver | After a network-type session failure, keep listening for the sender to reconnect and resume, up to `n` times (default 0: exit on the first failure). |
+| `--listen-timeout <sec>` | receiver | Exit with `listen_timeout` if no sender connects within this long; re-armed after each retryable failure (default 0 = wait forever). |
 
 ## Performance
 
@@ -204,6 +220,7 @@ node --test "tests/engine/*.test.js"
 |---|---|
 | `integrity.test.js` | Byte-identical output across empty/1-byte/chunk-boundary files, every chunk size 4 KiB–8 MiB, window sizes, TLS and plaintext, nested/unicode directories, multiple sources, and truncation of a stale longer destination file. |
 | `resume.test.js` | Link dropped mid-transfer (TLS and plaintext), receiver or sender process killed, repeated interruptions, partially finished directories, plus the cases that must restart from chunk 0 instead of resuming: changed file size, changed `--chunk-size`, deleted partial file, garbage or out-of-range `transfer.state`. |
+| `robustness.test.js` | Idle timeouts (a frozen link fails both sides with `peer_timeout`; a silent connection is dropped while the receiver keeps listening), the listen deadline, the receiver retry window (survives a dropped link or a corrupted chunk and the re-run resumes; retry budget runs out), and certificate pinning (stable fingerprint, wrong pin refused, invalid pins rejected). |
 | `failure-injection.test.js` | No receiver, wrong or missing token, TLS/plaintext mismatch, port scans and garbage bytes (receiver must keep listening), invalid input, injected chunk corruption (`DTS_CORRUPT_CHUNK`), bit flips on the wire via a fault proxy, and a hostile raw-protocol sender: bad handshake fields, path traversal, out-of-order/oversized/missing chunks, wrong hashes. |
 
 Tests marked `todo` document known engine bugs (see
@@ -233,17 +250,22 @@ Some deliberate, some just not built yet:
 - **No self-registration or SSO.** Accounts are admin-created only
   (`createAdmin.js` bootstraps the first one).
 - **No relay fallback.** If two machines can't reach each other directly
-  (NAT/firewall), the transfer just fails — `not_reachable`/connection
-  failure are recorded as distinct statuses so this is at least
-  observable, but nothing routes around it. Deliberately deferred until
-  real usage data shows how often it's actually needed.
+  (NAT/firewall), the transfer just fails. The sender's report records it
+  as `not_reachable` (and an unanswered offer as `timed_out`), separate
+  from `failed`, so how often this happens is observable, but nothing
+  routes around it. Deliberately deferred until that data shows it's
+  needed.
 - **The audit trail is client-self-reported, not tamper-proof.** Both
   sides report their own outcome after a transfer; the sender's report
   wins if they disagree. Fine for "did this generally work," not a
   cryptographic guarantee.
-- **TLS is confidentiality, not identity.** See the self-signed
-  certificate note above — no MITM protection on the first connection to
-  a given receiver process, and no pinning across runs.
+- **Certificate pinning trusts the backend.** The fingerprint the sender
+  pins to comes from the backend over HTTPS, so a compromised backend
+  could substitute its own. Standalone runs without `--pin-sha256` have no
+  receiver authentication at all.
+- **Login rate limiting is per process.** Failed logins are capped per
+  IP+username and per IP in memory; running several backend instances
+  would need a shared store.
 - **`frontend/` is stale and not part of the working system** — see the
   Components table above.
 - **Render's free tier cold-starts** after ~15 minutes idle, adding

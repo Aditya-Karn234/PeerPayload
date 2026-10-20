@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { spawnEngineProcess } = require("client-core/engine");
+const { runSenderWithRetries, senderReportStatus, reportOutcome } = require("client-core/transferPolicy");
 const { api, tokenStore } = require("../client");
 const config = require("../config");
 const { printJson } = require("../output");
@@ -60,37 +60,23 @@ async function waitForAcceptance(transferId) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
 
-  throw new Error("timed out waiting for the recipient to respond");
+  throw Object.assign(new Error("timed out waiting for the recipient to respond"), { code: "timed_out" });
 }
 
-function runSender({ host, port, token, transferId, chunkSize, filePath }, onEvent) {
-  return new Promise((resolve, reject) => {
-    const args = ["-h", host, "-p", String(port), "--token", token, "--transfer-id", transferId];
+function senderArgs({ host, port, token, transferId, chunkSize, certFingerprint, filePath }) {
+  const args = ["-h", host, "-p", String(port), "--token", token, "--transfer-id", transferId];
 
-    if (chunkSize)
-      args.push("--chunk-size", String(chunkSize));
+  if (chunkSize)
+    args.push("--chunk-size", String(chunkSize));
 
-    args.push(filePath);
+  // From the backend over HTTPS: only the receiver that accepted this
+  // transfer can complete the TLS handshake.
+  if (certFingerprint)
+    args.push("--pin-sha256", certFingerprint);
 
-    const handle = spawnEngineProcess(config.senderPath, args);
-    let finalEvent = null;
+  args.push(filePath);
 
-    handle.on("event", (event) => {
-      onEvent?.(event);
-
-      if (event.event === "transfer_complete" || event.event === "transfer_failed")
-        finalEvent = event;
-    });
-
-    handle.on("exit", ({ code }) => {
-      if (finalEvent)
-        resolve(finalEvent);
-      else
-        reject(new Error(`sender exited (code ${code}) without a final event`));
-    });
-
-    handle.on("error", reject);
-  });
+  return args;
 }
 
 async function sendCommand(filePath, options) {
@@ -130,9 +116,13 @@ async function sendCommand(filePath, options) {
       // already given up and never spawns sender.exe), so it just clutters
       // history. Best-effort: if even this report fails, the original
       // error is still what the user sees.
-      await api
-        .postTransferReport(intent.id, { role: "sender", status: "failed", fileCount, totalBytes, failReason: err.message })
-        .catch(() => {});
+      await reportOutcome(api, intent.id, {
+        role: "sender",
+        status: err.code === "timed_out" ? "timed_out" : "failed",
+        fileCount,
+        totalBytes,
+        failReason: err.message,
+      });
 
       throw err;
     }
@@ -142,31 +132,44 @@ async function sendCommand(filePath, options) {
 
     let printedDots = false;
 
-    const finalEvent = await runSender(
-      {
+    const outcome = await runSenderWithRetries({
+      exePath: config.senderPath,
+      args: senderArgs({
         host: accepted.receiverAddress,
         port: accepted.receiverPort,
         token: intent.engineToken,
         transferId: intent.id,
         chunkSize: options.chunkSize,
+        certFingerprint: accepted.receiverCertFingerprint,
         filePath: resolvedPath,
-      },
-      (event) => {
+      }),
+      onEvent: (event) => {
         if (!options.json && event.event === "chunk_verified") {
           process.stdout.write(".");
           printedDots = true;
         }
       },
-    );
+      onRetry: ({ attempt, reason, delayMs }) => {
+        if (printedDots) {
+          process.stdout.write("\n");
+          printedDots = false;
+        }
+
+        if (!options.json)
+          console.log(`Attempt ${attempt} failed (${reason}); resuming in ${Math.round(delayMs / 1000)}s...`);
+      },
+    });
 
     if (printedDots)
       process.stdout.write("\n");
 
+    const { finalEvent } = outcome;
     const ok = finalEvent.event === "transfer_complete";
 
-    await api.postTransferReport(intent.id, {
+    // A failed audit write must not turn a delivered file into a failure.
+    const reported = await reportOutcome(api, intent.id, {
       role: "sender",
-      status: ok ? "complete" : "failed",
+      status: senderReportStatus(outcome),
       fileCount,
       totalBytes,
       failReason: ok ? undefined : finalEvent.reason,
@@ -174,12 +177,15 @@ async function sendCommand(filePath, options) {
     });
 
     if (options.json) {
-      printJson({ ok, transferId: intent.id, ...finalEvent });
+      printJson({ ok, transferId: intent.id, attempts: outcome.attempts, reported, ...finalEvent });
     } else if (ok) {
-      console.log(`Transfer complete (${finalEvent.elapsedMs}ms).`);
+      console.log(`Transfer complete (${finalEvent.elapsedMs}ms${outcome.attempts > 1 ? `, ${outcome.attempts} attempts` : ""}).`);
     } else {
       console.error(`Transfer failed: ${finalEvent.reason}`);
     }
+
+    if (!reported && !options.json)
+      console.error("Warning: couldn't record the outcome with the server; history may show this transfer as still in progress.");
 
     if (!ok)
       process.exitCode = 1;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { StatTile, StatusBadge, ThemeToggle, TransferTable, Meter, formatBytes } from "@peerpayload/ui";
 
@@ -25,7 +25,14 @@ export default function Dashboard({ user, onLogout }) {
   const [sendError, setSendError] = useState(null);
   const [sendState, setSendState] = useState(null); // { phase, event }
 
-  const [incoming, setIncoming] = useState(null);
+  // Offers arrive by push, but a push sent while disconnected is lost, so
+  // pending transfers addressed to this user in the polled list count too.
+  const [pushedOffers, setPushedOffers] = useState({}); // id -> transfer
+  const [activeReceive, setActiveReceive] = useState(null); // the offer being received
+  // Offers already answered here (accepted, declined, finished). The polled
+  // list can lag by one interval and still show them as "pending"; without
+  // this they'd flash back up with live Accept/Decline buttons.
+  const [answered, setAnswered] = useState(() => new Set());
   const [receiveState, setReceiveState] = useState(null);
   const [respondingTo, setRespondingTo] = useState(null);
 
@@ -87,7 +94,7 @@ export default function Dashboard({ user, onLogout }) {
   useEffect(
     () =>
       window.peerpayload.onIncomingTransfer((transfer) => {
-        setIncoming(transfer);
+        setPushedOffers((prev) => ({ ...prev, [transfer.id]: transfer }));
       }),
     [],
   );
@@ -95,20 +102,74 @@ export default function Dashboard({ user, onLogout }) {
   useEffect(
     () =>
       window.peerpayload.onProgress((progress) => {
-        if (incoming && progress.transferId === incoming.id) {
+        // Auto-accept starts a receive from the main process without going
+        // through respondToOffer, so recognise it by the offer it belongs to.
+        const offer = !activeReceive ? offersRef.current.find((o) => o.id === progress.transferId) : null;
+
+        if (offer) {
+          setAnswered((prev) => new Set(prev).add(offer.id));
+          setActiveReceive(offer);
+          setReceiveState(progress);
+          return;
+        }
+
+        if (activeReceive && progress.transferId === activeReceive.id) {
           setReceiveState(progress);
 
-          if (progress.phase === "done")
-            setIncoming(null);
+          if (progress.phase === "done") {
+            setActiveReceive(null);
+            dismissOffer(progress.transferId);
+          }
 
           return;
         }
 
-        setSendState((prev) => (prev && prev.transferId !== progress.transferId ? prev : progress));
+        // Ignore progress from a different transfer than the one this send
+        // is tracking. The initial "starting" state has no transferId yet, so
+        // it must accept the first event — comparing against undefined used
+        // to reject every event and leave the UI stuck on "Starting…".
+        setSendState((prev) => (prev?.transferId && prev.transferId !== progress.transferId ? prev : progress));
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [incoming],
+    [activeReceive],
   );
+
+  const offers = useMemo(() => {
+    const byId = new Map();
+    const polledStatus = new Map(transfers.map((t) => [t.id, t.status]));
+
+    for (const t of transfers)
+      if (t.status === "pending" && t.receiverUsername === user.username && !answered.has(t.id))
+        byId.set(t.id, t);
+
+    // A pushed offer may not be in the last poll yet; drop it once a poll
+    // shows it's no longer pending (declined, cancelled, sender gave up).
+    for (const t of Object.values(pushedOffers)) {
+      const status = polledStatus.get(t.id);
+
+      if ((!status || status === "pending") && !answered.has(t.id))
+        byId.set(t.id, t);
+    }
+
+    if (activeReceive)
+      byId.set(activeReceive.id, activeReceive);
+
+    return [...byId.values()];
+  }, [transfers, pushedOffers, activeReceive, answered, user.username]);
+
+  const offersRef = useRef(offers);
+
+  offersRef.current = offers;
+
+  function dismissOffer(id) {
+    setAnswered((prev) => new Set(prev).add(id));
+    setPushedOffers((prev) => {
+      const next = { ...prev };
+
+      delete next[id];
+      return next;
+    });
+  }
 
   const active = useMemo(() => transfers.filter((t) => ACTIVE_STATUSES.has(t.status)).length, [transfers]);
   const complete = useMemo(() => transfers.filter((t) => t.status === "complete").length, [transfers]);
@@ -139,18 +200,31 @@ export default function Dashboard({ user, onLogout }) {
     }
   }
 
-  async function respondToIncoming(accept) {
-    if (!incoming)
-      return;
-
-    setRespondingTo(incoming.id);
+  async function respondToOffer(offer, accept) {
+    setRespondingTo(offer.id);
+    setAnswered((prev) => new Set(prev).add(offer.id));
 
     try {
-      if (accept)
-        await window.peerpayload.acceptIncoming(incoming.id);
-      else {
-        await window.peerpayload.rejectIncoming(incoming.id);
-        setIncoming(null);
+      if (accept) {
+        setActiveReceive(offer);
+        setReceiveState(null);
+        await window.peerpayload.acceptIncoming(offer.id);
+      } else {
+        await window.peerpayload.rejectIncoming(offer.id);
+        dismissOffer(offer.id);
+      }
+    } catch (err) {
+      // Didn't go through: let the offer come back so it can be retried.
+      setAnswered((prev) => {
+        const next = new Set(prev);
+
+        next.delete(offer.id);
+        return next;
+      });
+
+      if (accept) {
+        setActiveReceive(null);
+        setReceiveState({ phase: "done", ok: false, transferId: offer.id, finalEvent: { reason: err.message } });
       }
     } finally {
       setRespondingTo(null);
@@ -191,8 +265,9 @@ export default function Dashboard({ user, onLogout }) {
         </div>
       </div>
 
-      {incoming && (
+      {offers.map((incoming) => (
         <div
+          key={incoming.id}
           className="mt-4 rounded-lg border p-4"
           style={{ borderColor: "var(--color-accent)", background: "var(--color-surface)" }}
         >
@@ -201,19 +276,22 @@ export default function Dashboard({ user, onLogout }) {
             {incoming.fileCount === 1 ? "" : "s"}
             {incoming.totalBytes ? ` (${formatBytes(incoming.totalBytes)})` : ""}
           </p>
-          {receiveState ? (
+          {activeReceive?.id === incoming.id && receiveState ? (
             <p className="mt-2 text-xs" style={{ color: "var(--color-ink-muted)" }}>
               {receiveState.phase === "starting-receiver" && "Starting receiver…"}
               {receiveState.phase === "accepted" && "Accepted — waiting for sender to connect…"}
-              {receiveState.phase === "receiving" && "Receiving…"}
+              {receiveState.phase === "receiving" &&
+                (receiveState.event?.event === "session_failed"
+                  ? `Connection lost (${receiveState.event.reason}) — waiting for the sender to resume…`
+                  : "Receiving…")}
               {receiveState.phase === "done" && (receiveState.ok ? "Complete." : `Failed: ${receiveState.finalEvent?.reason}`)}
             </p>
           ) : (
             <div className="mt-3 flex gap-2">
               <button
                 type="button"
-                onClick={() => respondToIncoming(true)}
-                disabled={respondingTo === incoming.id}
+                onClick={() => respondToOffer(incoming, true)}
+                disabled={respondingTo === incoming.id || Boolean(activeReceive)}
                 className="rounded-md px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
                 style={{ background: "var(--color-accent)" }}
               >
@@ -221,8 +299,8 @@ export default function Dashboard({ user, onLogout }) {
               </button>
               <button
                 type="button"
-                onClick={() => respondToIncoming(false)}
-                disabled={respondingTo === incoming.id}
+                onClick={() => respondToOffer(incoming, false)}
+                disabled={respondingTo === incoming.id || activeReceive?.id === incoming.id}
                 className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-60"
                 style={{ borderColor: "var(--color-critical)", color: "var(--color-critical)" }}
               >
@@ -231,6 +309,12 @@ export default function Dashboard({ user, onLogout }) {
             </div>
           )}
         </div>
+      ))}
+
+      {receiveState?.phase === "done" && !activeReceive && (
+        <p className="mt-2 text-xs" style={{ color: receiveState.ok ? "var(--color-good)" : "var(--color-critical)" }}>
+          {receiveState.ok ? "Last transfer received." : `Last receive failed: ${receiveState.finalEvent?.reason}`}
+        </p>
       )}
 
       <div className="mt-6 grid gap-3 sm:grid-cols-3">
@@ -325,6 +409,8 @@ export default function Dashboard({ user, onLogout }) {
               {sendState.phase === "starting" && "Starting…"}
               {sendState.phase === "waiting-for-acceptance" && "Waiting for recipient to accept…"}
               {sendState.phase === "sending" && "Sending…"}
+              {sendState.phase === "retrying" &&
+                `Connection lost (${sendState.reason}) — resuming in ${Math.round(sendState.delayMs / 1000)}s (attempt ${sendState.attempt + 1})…`}
               {sendState.phase === "done" && (sendState.ok ? "Complete." : `Failed: ${sendState.finalEvent?.reason}`)}
             </p>
             {sendState.phase === "sending" && (

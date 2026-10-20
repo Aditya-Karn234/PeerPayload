@@ -1,7 +1,15 @@
 import fs from "fs";
 import path from "path";
 
-import { spawnEngineProcess } from "client-core/engine";
+import {
+  runEngineOnce,
+  runSenderWithRetries,
+  senderReportStatus,
+  receiverReportStatus,
+  reportOutcome,
+  RECEIVER_MAX_RETRIES,
+  RECEIVER_LISTEN_TIMEOUT_SEC,
+} from "client-core/transferPolicy";
 import config from "./config";
 import { getApiClient } from "./apiClient";
 import { getLocalIp, findFreePort } from "./network";
@@ -46,7 +54,7 @@ function waitForAcceptance(transferId) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       cleanup();
-      reject(new Error("timed out waiting for the recipient to respond"));
+      reject(Object.assign(new Error("timed out waiting for the recipient to respond"), { code: "timed_out" }));
     }, ACCEPT_TIMEOUT_MS);
 
     function onAccepted(transfer) {
@@ -71,29 +79,6 @@ function waitForAcceptance(transferId) {
 
     socketBus.events.on("transfer-accepted", onAccepted);
     socketBus.events.on("transfer-rejected", onRejected);
-  });
-}
-
-function runEngineProcess(exePath, args, onEvent) {
-  return new Promise((resolve, reject) => {
-    const handle = spawnEngineProcess(exePath, args);
-    let finalEvent = null;
-
-    handle.on("event", (event) => {
-      onEvent?.(event);
-
-      if (event.event === "transfer_complete" || event.event === "transfer_failed")
-        finalEvent = event;
-    });
-
-    handle.on("exit", ({ code }) => {
-      if (finalEvent)
-        resolve(finalEvent);
-      else
-        reject(new Error(`engine process exited (code ${code}) without a final event`));
-    });
-
-    handle.on("error", reject);
   });
 }
 
@@ -125,9 +110,13 @@ export async function runSend({ filePath, toUsername, chunkSize }, onProgress) {
     // history and inflates the "active transfers" count. Best-effort: if
     // even this report fails, the original error is still what the user
     // sees — reporting is a cleanup step, not the point of this call.
-    await api
-      .postTransferReport(intent.id, { role: "sender", status: "failed", fileCount, totalBytes, failReason: err.message })
-      .catch(() => {});
+    await reportOutcome(api, intent.id, {
+      role: "sender",
+      status: err.code === "timed_out" ? "timed_out" : "failed",
+      fileCount,
+      totalBytes,
+      failReason: err.message,
+    });
 
     throw err;
   }
@@ -144,24 +133,36 @@ export async function runSend({ filePath, toUsername, chunkSize }, onProgress) {
   if (chunkSize)
     args.push("--chunk-size", String(chunkSize));
 
+  // The fingerprint came from the backend over HTTPS, so pinning to it means
+  // only the receiver that accepted this transfer can complete the TLS
+  // handshake. Absent only for an older receiving client.
+  if (accepted.receiverCertFingerprint)
+    args.push("--pin-sha256", accepted.receiverCertFingerprint);
+
   args.push(filePath);
 
-  const finalEvent = await runEngineProcess(config.senderPath, args, (event) =>
-    onProgress({ phase: "sending", transferId: intent.id, event }),
-  );
+  const outcome = await runSenderWithRetries({
+    exePath: config.senderPath,
+    args,
+    onEvent: (event, attempt) => onProgress({ phase: "sending", transferId: intent.id, attempt, event }),
+    onRetry: ({ attempt, reason, delayMs }) =>
+      onProgress({ phase: "retrying", transferId: intent.id, attempt, reason, delayMs }),
+  });
 
+  const { finalEvent } = outcome;
   const ok = finalEvent.event === "transfer_complete";
 
-  await api.postTransferReport(intent.id, {
+  // A failed audit write must not turn a delivered file into a failure.
+  const reported = await reportOutcome(api, intent.id, {
     role: "sender",
-    status: ok ? "complete" : "failed",
+    status: senderReportStatus(outcome),
     fileCount,
     totalBytes,
     failReason: ok ? undefined : finalEvent.reason,
     elapsedMs: finalEvent.elapsedMs,
   });
 
-  onProgress({ phase: "done", transferId: intent.id, ok, finalEvent });
+  onProgress({ phase: "done", transferId: intent.id, ok, finalEvent, attempts: outcome.attempts, reported });
 
   return { ok, transferId: intent.id };
 }
@@ -188,15 +189,19 @@ export async function runReceive({ transferId, outputDir }, onProgress) {
     "-o", outputDir,
     "--token", transfer.engineToken,
     "--transfer-id", transferId,
+    // Stay up through a dropped link so the sender can reconnect and
+    // resume, and give up if the sender never shows up at all.
+    "--max-retries", String(RECEIVER_MAX_RETRIES),
+    "--listen-timeout", String(RECEIVER_LISTEN_TIMEOUT_SEC),
   ];
 
   let listeningResolve;
   let listeningReject;
   const listening = new Promise((resolve, reject) => { listeningResolve = resolve; listeningReject = reject; });
 
-  const finishedPromise = runEngineProcess(config.receiverPath, args, (event) => {
+  const finishedPromise = runEngineOnce(config.receiverPath, args, (event) => {
     if (event.event === "listening")
-      listeningResolve();
+      listeningResolve(event);
 
     onProgress({ phase: "receiving", transferId, event });
   });
@@ -209,17 +214,21 @@ export async function runReceive({ transferId, outputDir }, onProgress) {
   // missing). No-op if listening already settled.
   finishedPromise.catch((err) => listeningReject(err));
 
-  await listening;
+  const listeningEvent = await listening;
 
-  await api.acceptTransfer(transferId, { host: getLocalIp(), port });
+  await api.acceptTransfer(transferId, {
+    host: getLocalIp(),
+    port,
+    certFingerprint: listeningEvent.certSha256,
+  });
   onProgress({ phase: "accepted", transferId });
 
   const finalEvent = await finishedPromise;
   const ok = finalEvent.event === "transfer_complete";
 
-  await api.postTransferReport(transferId, {
+  await reportOutcome(api, transferId, {
     role: "receiver",
-    status: ok ? "complete" : "failed",
+    status: receiverReportStatus(finalEvent),
     failReason: ok ? undefined : finalEvent.reason,
     elapsedMs: finalEvent.elapsedMs,
   });
