@@ -1,6 +1,7 @@
 #pragma once
 
 #include "platform_socket.hpp"
+#include "run_context.hpp"
 #include <string>
 #include <cstring>
 #include <mutex>
@@ -192,6 +193,119 @@ inline bool waitReadable(SOCKET sock, int timeoutMs)
     int rc = select(static_cast<int>(sock) + 1, &readSet, nullptr, nullptr, &tv);
 
     return rc > 0;
+}
+
+inline bool setBlocking(SOCKET sock, bool blocking)
+{
+#ifdef _WIN32
+    u_long nonBlocking = blocking ? 0 : 1;
+
+    return ioctlsocket(sock, FIONBIO, &nonBlocking) == 0;
+#else
+    int flags = fcntl(sock, F_GETFL, 0);
+
+    if (flags < 0)
+        return false;
+
+    flags = blocking ? (flags & ~O_NONBLOCK) : (flags | O_NONBLOCK);
+
+    return fcntl(sock, F_SETFL, flags) == 0;
+#endif
+}
+
+enum class ConnectResult
+{
+    Connected,
+    Failed,   // refused, unreachable, or timed out; errorCode says which
+    Cancelled // cancelRequested() became true while waiting
+};
+
+// connect() that a library caller can cancel and that gives up after
+// timeoutMs. A plain blocking connect() can't be interrupted, so the
+// socket is made non-blocking, polled in short slices that check for
+// cancellation, then made blocking again for the rest of the protocol.
+inline ConnectResult connectWithCancel(SOCKET sock, const sockaddr *addr, int addrLen, int timeoutMs, int &errorCode)
+{
+    errorCode = 0;
+
+    if (!setBlocking(sock, false))
+    {
+        errorCode = lastSocketError();
+        return ConnectResult::Failed;
+    }
+
+    if (connect(sock, addr, addrLen) == 0)
+    {
+        setBlocking(sock, true);
+        return ConnectResult::Connected;
+    }
+
+    int err = lastSocketError();
+
+#ifdef _WIN32
+    bool inProgress = err == WSAEWOULDBLOCK || err == WSAEINPROGRESS;
+#else
+    bool inProgress = err == EINPROGRESS;
+#endif
+
+    if (!inProgress)
+    {
+        errorCode = err;
+        return ConnectResult::Failed;
+    }
+
+    for (int waited = 0; timeoutMs <= 0 || waited < timeoutMs; waited += 200)
+    {
+        if (cancelRequested())
+            return ConnectResult::Cancelled;
+
+        fd_set writeSet;
+        fd_set errorSet;
+
+        FD_ZERO(&writeSet);
+        FD_ZERO(&errorSet);
+        FD_SET(sock, &writeSet);
+        FD_SET(sock, &errorSet);
+
+        timeval tv{};
+
+        tv.tv_usec = 200 * 1000;
+
+        // Winsock reports a failed connect through the error set, POSIX
+        // through writability plus SO_ERROR; checking both covers either.
+        int rc = select(static_cast<int>(sock) + 1, nullptr, &writeSet, &errorSet, &tv);
+
+        if (rc < 0)
+        {
+            errorCode = lastSocketError();
+            return ConnectResult::Failed;
+        }
+
+        if (rc == 0)
+            continue;
+
+        int soError = 0;
+        platform_socklen_t len = sizeof(soError);
+
+        getsockopt(sock, SOL_SOCKET, SO_ERROR, reinterpret_cast<char *>(&soError), &len);
+
+        if (soError != 0 || FD_ISSET(sock, &errorSet))
+        {
+            errorCode = soError ? soError : lastSocketError();
+            return ConnectResult::Failed;
+        }
+
+        setBlocking(sock, true);
+        return ConnectResult::Connected;
+    }
+
+#ifdef _WIN32
+    errorCode = WSAETIMEDOUT;
+#else
+    errorCode = ETIMEDOUT;
+#endif
+
+    return ConnectResult::Failed;
 }
 
 #ifdef _WIN32

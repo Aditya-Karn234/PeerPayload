@@ -164,6 +164,30 @@ config bakes in the production URL for a packaged install instead).
   byte stream, so this mostly catches logic bugs, not routine transit
   noise.
 
+### Using the engine as a library
+
+The same engine also builds as a library, `peerpayload` (`.dll`/`.so`), for
+apps that can't launch the `sender`/`receiver` programs (Android). The two
+programs are now just `main()` wrappers around that library, so there is one
+implementation either way.
+
+The C API (`engine/include/peerpayload.h`) takes the programs' exact
+command-line arguments and delivers their exact JSON events through a
+callback instead of stdout:
+
+```c
+pp_run *run = pp_run_new(on_event, user_data);
+const char *args[] = { "-p", "8080", "-o", "/data/received" };
+int rc = pp_run_receiver(run, 4, args);   /* blocks; 0 = success */
+pp_run_free(run);
+```
+
+Runs block, so call them from a worker thread. `pp_run_cancel` works from
+any thread at any stage (listening, connecting, mid-transfer) and ends the
+run promptly with `transfer_failed` / `cancelled`, keeping resume state.
+Several runs can be active in one process; each callback only sees its own
+events. `engine/test/lib_test.cpp` (built as `engine_lib_test`) covers this.
+
 ### Running the engine standalone (no accounts, no backend)
 
 ```sh
@@ -312,7 +336,8 @@ Some deliberate, some just not built yet:
 ## Project layout
 
 ```
-sender/, receiver/    the two CLI binaries (C++)
+sender/, receiver/    the two CLI binaries (C++): engine logic + thin main()
+engine/                the engine as a library (static + .dll/.so) with a C API, for in-process use
 shared/                protocol, TLS, hashing, and pipeline code shared by both
 backend/               Express API + Prisma/Postgres + socket.io — auth, presence, directory, audit
 client-core/           shared client logic (API calls, engine spawning) used by desktop/ and cli/

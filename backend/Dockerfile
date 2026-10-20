@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /engine
 COPY CMakeLists.txt ./
 COPY shared ./shared
+COPY engine ./engine
 COPY sender ./sender
 COPY receiver ./receiver
 

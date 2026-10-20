@@ -6,6 +6,8 @@
 #include <mutex>
 #include <string>
 
+#include "run_context.hpp"
+
 // The pipelined sender has multiple threads (reader/hasher/sender/ack
 // listener) that can each emit an event; std::cout itself isn't safe against
 // interleaved writes from separate threads, so every emit() serializes
@@ -117,10 +119,24 @@ public:
         return *this;
     }
 
-    // Flushed immediately: stdout to a pipe is fully buffered by default, and
-    // a consumer waiting on live progress can't wait for process exit.
+    // Library use (a current RunContext with a callback): hand the event to
+    // that run's callback. Otherwise stdout, flushed immediately: stdout to a
+    // pipe is fully buffered by default, and a consumer waiting on live
+    // progress can't wait for process exit.
     void emit() const
     {
+        RunContext *run = currentRun();
+
+        if (run && run->onEvent)
+        {
+            std::string line = "{" + body_ + "}";
+
+            std::lock_guard<std::mutex> lock(run->eventMutex);
+
+            run->onEvent(line);
+            return;
+        }
+
         std::lock_guard<std::mutex> lock(jsonEventMutex());
 
         std::cout << "{" << body_ << "}\n"

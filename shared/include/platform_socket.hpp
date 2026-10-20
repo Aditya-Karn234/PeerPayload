@@ -55,6 +55,7 @@ using platform_socklen_t = int;
 #include <netdb.h>
 #include <sys/select.h>
 #include <sys/time.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <cerrno>
 #include <string>
