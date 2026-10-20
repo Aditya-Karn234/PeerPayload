@@ -1,11 +1,11 @@
-const express = require("express");
+const { createRouter } = require("../lib/router");
 
 const db = require("../db");
 const { hashPassword } = require("../auth/hash");
 const { revokeAllSessionsForUser } = require("../auth/tokens");
 const { requireAuth, requireAdmin } = require("../middleware/auth");
 
-const router = express.Router();
+const router = createRouter();
 
 // Every route here is admin-only — this whole router assumes both
 // middlewares are applied before any handler runs.

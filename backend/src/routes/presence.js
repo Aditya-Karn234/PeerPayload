@@ -1,9 +1,9 @@
-const express = require("express");
+const { createRouter } = require("../lib/router");
 
 const { requireAuth } = require("../middleware/auth");
 const presenceService = require("../services/presenceService");
 
-const router = express.Router();
+const router = createRouter();
 
 router.use(requireAuth);
 

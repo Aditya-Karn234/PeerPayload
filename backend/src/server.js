@@ -18,6 +18,10 @@ const signalBus = require("./signalBus");
 
 const app = express();
 
+// Render terminates TLS at its proxy; without this req.ip is the proxy's
+// address and the login limiter would lump every client together.
+app.set("trust proxy", 1);
+
 app.use(cors());
 app.use(express.json());
 
@@ -29,6 +33,33 @@ app.use("/presence", presenceRouter);
 app.use("/directory", directoryRouter);
 app.use("/transfers", requireAuth, transfersRouter);
 app.use("/network", requireAuth, networkRouter);
+
+app.use((req, res) => res.status(404).json({ error: "not found" }));
+
+// Every handler error ends here (routes use lib/router's createRouter, which
+// forwards async rejections). Answers the request instead of crashing the
+// process; malformed client input becomes a 400, anything else a 500.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  let status = 500;
+
+  if (err.status >= 400 && err.status < 600)
+    status = err.status; // e.g. body-parser's 400 for malformed JSON
+  else if (err.name === "PrismaClientValidationError")
+    status = 400; // a value the schema rejects slipped past route validation
+
+  if (status >= 500)
+    console.error(`${req.method} ${req.originalUrl} failed:`, err);
+
+  if (res.headersSent)
+    return;
+
+  // Only http-errors style errors (expose: true) carry a message meant for
+  // clients; never echo internal or Prisma error text.
+  const message = status >= 500 ? "internal server error" : err.expose ? err.message : "invalid request";
+
+  res.status(status).json({ error: message });
+});
 
 const server = http.createServer(app);
 
@@ -43,14 +74,22 @@ const io = new SocketIOServer(server, {
 // specific logged-in user and joins exactly one room for them; every
 // signalBus event forwards straight into that one room.
 io.use(async (socket, next) => {
-  const token = socket.handshake.auth?.token;
-  const result = token ? await verifySessionToken(token) : null;
+  try {
+    const token = socket.handshake.auth?.token;
+    const result = token ? await verifySessionToken(token) : null;
 
-  if (!result)
-    return next(new Error("unauthorized"));
+    if (!result)
+      return next(new Error("unauthorized"));
 
-  socket.userId = result.user.id;
-  next();
+    socket.userId = result.user.id;
+    next();
+  } catch (err) {
+    // A database failure here must not become an unhandled rejection.
+    // "unavailable" (not "unauthorized") so the client retries instead of
+    // logging the user out.
+    console.error("socket auth failed:", err);
+    next(new Error("unavailable"));
+  }
 });
 
 io.on("connection", (socket) => {

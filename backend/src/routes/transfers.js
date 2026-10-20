@@ -1,11 +1,11 @@
-const express = require("express");
+const { createRouter } = require("../lib/router");
 const crypto = require("crypto");
 
 const db = require("../db");
 const presenceService = require("../services/presenceService");
 const signalBus = require("../signalBus");
 
-const router = express.Router();
+const router = createRouter();
 
 // Mirrors shared/include/protocol.hpp's TOKEN_LEN - 1 — the engine token
 // generated here is handed to sender.exe/receiver.exe as --token.
@@ -22,8 +22,46 @@ const TERMINAL_STATUSES = new Set([
   "timed_out",
 ]);
 
+// Outcomes a client may report. not_reachable (the sender could never
+// connect to the receiver) and timed_out (the recipient never answered the
+// offer) are kept apart from plain "failed" so the audit trail can show how
+// often direct connections fail — the data a relay decision needs.
+const REPORTABLE_STATUSES = new Set(["complete", "failed", "not_reachable", "timed_out"]);
+
+const MAX_FILE_COUNT = 1_000_000; // mirrors protocol.hpp's MAX_FILE_COUNT
+const MAX_FAIL_REASON_LENGTH = 500;
+const MAX_BIGINT = 9223372036854775807n; // Postgres BIGINT ceiling
+const CERT_FINGERPRINT = /^[0-9a-f]{64}$/i;
+
 function generateEngineToken() {
   return crypto.randomBytes(ENGINE_TOKEN_BYTES).toString("hex");
+}
+
+// Optional non-negative integer field. Returns { value } or { error }.
+function parseCount(name, raw, max) {
+  if (raw === undefined || raw === null)
+    return { value: undefined };
+
+  const n = Number(raw);
+
+  if (!Number.isSafeInteger(n) || n < 0 || n > max)
+    return { error: `${name} must be an integer between 0 and ${max}` };
+
+  return { value: n };
+}
+
+// Optional byte count. Accepts a number or a decimal string (sizes past
+// 2^53 arrive as strings), stored as BigInt.
+function parseByteCount(name, raw) {
+  if (raw === undefined || raw === null)
+    return { value: undefined };
+
+  const text = typeof raw === "number" && Number.isSafeInteger(raw) ? String(raw) : raw;
+
+  if (typeof text !== "string" || !/^\d{1,19}$/.test(text) || BigInt(text) > MAX_BIGINT)
+    return { error: `${name} must be a non-negative integer` };
+
+  return { value: BigInt(text) };
 }
 
 // engineToken is only ever included for the two actual parties to a
@@ -48,6 +86,9 @@ function serializeTransfer(t, { forUser } = {}) {
     failReason: t.failReason,
     receiverAddress: t.receiverAddress,
     receiverPort: t.receiverPort,
+    // Not secret: the sender pins the receiver's TLS certificate to this,
+    // and it only has to be authentic, which HTTPS to the backend gives it.
+    receiverCertFingerprint: t.receiverCertFingerprint ?? null,
     reportedBySender: t.reportedBySender,
     reportedByReceiver: t.reportedByReceiver,
     senderReport: t.senderReport,
@@ -80,6 +121,12 @@ router.post("/", async (req, res) => {
   if (toUsername === req.user.username)
     return res.status(400).json({ error: "cannot send a transfer to yourself" });
 
+  const parsedCount = parseCount("fileCount", fileCount, MAX_FILE_COUNT);
+  const parsedBytes = parseByteCount("totalBytes", totalBytes);
+
+  if (parsedCount.error || parsedBytes.error)
+    return res.status(400).json({ error: parsedCount.error || parsedBytes.error });
+
   const receiver = await db.user.findUnique({ where: { username: toUsername } });
 
   if (!receiver || receiver.deactivatedAt)
@@ -97,8 +144,8 @@ router.post("/", async (req, res) => {
       senderUsername: req.user.username,
       receiverUsername: receiver.username,
       engineToken,
-      fileCount: fileCount !== undefined && fileCount !== null ? Number(fileCount) : undefined,
-      totalBytes: totalBytes !== undefined && totalBytes !== null ? BigInt(totalBytes) : undefined,
+      fileCount: parsedCount.value,
+      totalBytes: parsedBytes.value,
     },
   });
 
@@ -138,7 +185,7 @@ router.get("/:id", async (req, res) => {
 // and seen its own "listening" event before calling this — host/port here
 // describe where that receiver is actually listening.
 router.post("/:id/accept", async (req, res) => {
-  const { host, port } = req.body || {};
+  const { host, port, certFingerprint } = req.body || {};
 
   const transfer = await db.transfer.findUnique({ where: { id: req.params.id } });
 
@@ -159,6 +206,12 @@ router.post("/:id/accept", async (req, res) => {
   if (!Number.isInteger(parsedPort) || parsedPort < MIN_PORT || parsedPort > MAX_PORT)
     return res.status(400).json({ error: `port must be an integer between ${MIN_PORT} and ${MAX_PORT}` });
 
+  // Optional so older clients (and --no-tls debugging) still work; when
+  // present it's the SHA-256 of the receiver's certificate from its
+  // "listening" event, and the sender refuses any other certificate.
+  if (certFingerprint !== undefined && certFingerprint !== null && (typeof certFingerprint !== "string" || !CERT_FINGERPRINT.test(certFingerprint)))
+    return res.status(400).json({ error: "certFingerprint must be 64 hex characters" });
+
   const updated = await db.transfer.update({
     where: { id: transfer.id },
     data: {
@@ -166,6 +219,7 @@ router.post("/:id/accept", async (req, res) => {
       acceptedAt: new Date(),
       receiverAddress: host.trim(),
       receiverPort: parsedPort,
+      receiverCertFingerprint: certFingerprint ? certFingerprint.toLowerCase() : null,
     },
   });
 
@@ -209,6 +263,23 @@ router.post("/:id/report", async (req, res) => {
   if (role !== "sender" && role !== "receiver")
     return res.status(400).json({ error: 'role must be "sender" or "receiver"' });
 
+  if (!REPORTABLE_STATUSES.has(status))
+    return res.status(400).json({ error: `status must be one of: ${[...REPORTABLE_STATUSES].join(", ")}` });
+
+  if (failReason !== undefined && failReason !== null && typeof failReason !== "string")
+    return res.status(400).json({ error: "failReason must be a string" });
+
+  if (elapsedMs !== undefined && elapsedMs !== null && (!Number.isFinite(Number(elapsedMs)) || Number(elapsedMs) < 0))
+    return res.status(400).json({ error: "elapsedMs must be a non-negative number" });
+
+  const reportCount = parseCount("fileCount", fileCount, MAX_FILE_COUNT);
+  const reportBytes = parseByteCount("totalBytes", totalBytes);
+
+  if (reportCount.error || reportBytes.error)
+    return res.status(400).json({ error: reportCount.error || reportBytes.error });
+
+  const reason = failReason ? failReason.slice(0, MAX_FAIL_REASON_LENGTH) : undefined;
+
   const transfer = await db.transfer.findUnique({ where: { id: req.params.id } });
 
   if (!transfer)
@@ -219,7 +290,15 @@ router.post("/:id/report", async (req, res) => {
   if (expectedUserId !== req.user.id)
     return res.status(403).json({ error: `you are not the ${role} for this transfer` });
 
-  const report = { status, fileCount, totalBytes, failReason, elapsedMs, reportedAt: new Date() };
+  const report = {
+    status,
+    fileCount: reportCount.value,
+    // Json columns can't hold a BigInt; keep the exact value as a string.
+    totalBytes: reportBytes.value === undefined ? undefined : reportBytes.value.toString(),
+    failReason: reason,
+    elapsedMs: elapsedMs === undefined || elapsedMs === null ? undefined : Number(elapsedMs),
+    reportedAt: new Date(),
+  };
 
   const data =
     role === "sender"
@@ -231,11 +310,11 @@ router.post("/:id/report", async (req, res) => {
   // receiver-only report still gets recorded (for cross-check) but doesn't
   // move the transfer out of its current state on its own.
   if (role === "sender" && !TERMINAL_STATUSES.has(transfer.status)) {
-    data.status = status === "failed" ? "failed" : "complete";
+    data.status = status;
     data.completedAt = new Date();
 
-    if (status === "failed" && failReason)
-      data.failReason = failReason;
+    if (status !== "complete" && reason)
+      data.failReason = reason;
   }
 
   const updated = await db.transfer.update({ where: { id: transfer.id }, data });

@@ -89,8 +89,8 @@ model Transfer {
   // only the create and accept responses include it.
   engineToken String
 
-  // pending -> (accepted -> in_progress -> complete|failed) | rejected |
-  // not_reachable | timed_out | cancelled. "not_reachable"/"timed_out" are
+  // pending -> (accepted -> complete|failed|not_reachable) | rejected |
+  // timed_out | cancelled. "not_reachable"/"timed_out" are
   // distinct values (not folded into "failed") specifically so real
   // deployment data on how often direct P2P connection fails is observable
   // later — see architecture.md's relay-fallback trigger condition.
@@ -105,6 +105,12 @@ model Transfer {
   // reach them to propose a transfer," not a fixed rendezvous point.
   receiverAddress String?
   receiverPort    Int?
+
+  // SHA-256 (hex) of the receiver engine's TLS certificate for THIS
+  // transfer, supplied at accept time from its "listening" event. The
+  // sender pins the certificate to it (sender --pin-sha256), so a
+  // machine-in-the-middle can't stand in for the receiver. Not secret.
+  receiverCertFingerprint String?
 
   // Populated by each side's local client after its own engine process
   // exits. status/completedAt are finalized from the sender's report when

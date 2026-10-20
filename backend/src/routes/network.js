@@ -1,6 +1,6 @@
-const express = require("express");
+const { createRouter } = require("../lib/router");
 
-const router = express.Router();
+const router = createRouter();
 
 // A machine can't learn its own public (NAT-translated) IP from its local
 // interfaces — that's only visible to something outside the NAT. There's no

@@ -1,11 +1,12 @@
-const express = require("express");
+const { createRouter } = require("../lib/router");
 
 const db = require("../db");
 const { verifyPassword } = require("../auth/hash");
 const { createSession, revokeSession } = require("../auth/tokens");
 const { requireAuth } = require("../middleware/auth");
+const limiter = require("../lib/loginLimiter");
 
-const router = express.Router();
+const router = createRouter();
 
 function serializeUser(user) {
   return {
@@ -23,17 +24,32 @@ router.post("/login", async (req, res) => {
   if (typeof username !== "string" || typeof password !== "string")
     return res.status(400).json({ error: "username and password are required" });
 
+  // Checked before touching the database or bcrypt, so a blocked client
+  // costs almost nothing.
+  const waitMs = limiter.retryAfterMs(req.ip, username);
+
+  if (waitMs > 0) {
+    res.set("Retry-After", String(Math.ceil(waitMs / 1000)));
+    return res.status(429).json({ error: "too many failed login attempts; try again later" });
+  }
+
   const user = await db.user.findUnique({ where: { username } });
 
   // Same 401 whether the username doesn't exist or the password is wrong —
   // distinguishing them lets an attacker enumerate valid usernames.
-  if (!user || user.deactivatedAt)
+  if (!user || user.deactivatedAt) {
+    limiter.recordFailure(req.ip, username);
     return res.status(401).json({ error: "invalid username or password" });
+  }
 
   const ok = await verifyPassword(password, user.passwordHash);
 
-  if (!ok)
+  if (!ok) {
+    limiter.recordFailure(req.ip, username);
     return res.status(401).json({ error: "invalid username or password" });
+  }
+
+  limiter.recordSuccess(req.ip, username);
 
   const token = await createSession(user.id);
 

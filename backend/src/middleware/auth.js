@@ -18,7 +18,15 @@ async function requireAuth(req, res, next) {
   if (!token)
     return res.status(401).json({ error: "missing bearer token" });
 
-  const result = await verifySessionToken(token);
+  let result;
+
+  try {
+    result = await verifySessionToken(token);
+  } catch (err) {
+    // Mounted directly with app.use() in server.js, outside createRouter's
+    // wrapping, so it has to forward its own failures.
+    return next(err);
+  }
 
   if (!result)
     return res.status(401).json({ error: "invalid, expired, or revoked session" });
