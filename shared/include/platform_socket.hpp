@@ -53,6 +53,8 @@ using platform_socklen_t = int;
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <sys/select.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <cerrno>
 #include <string>
@@ -86,3 +88,30 @@ inline int lastSocketError()
 using platform_socklen_t = socklen_t;
 
 #endif
+
+// True when a failed send()/recv() gave up because SO_SNDTIMEO/SO_RCVTIMEO
+// expired, as opposed to the peer closing or resetting the connection.
+inline bool isTimeoutError(int code)
+{
+#ifdef _WIN32
+    return code == WSAETIMEDOUT || code == WSAEWOULDBLOCK;
+#else
+    return code == EAGAIN || code == EWOULDBLOCK || code == ETIMEDOUT;
+#endif
+}
+
+// Set by every send/recv helper (raw and TLS) when its last failure was an
+// idle timeout. Per-thread because the sender pipeline's network thread and
+// ack-listener thread fail independently, and each maps its own failure to
+// a reason code.
+inline bool &lastIoTimedOutFlag()
+{
+    thread_local bool flag = false;
+
+    return flag;
+}
+
+inline bool lastIoTimedOut()
+{
+    return lastIoTimedOutFlag();
+}

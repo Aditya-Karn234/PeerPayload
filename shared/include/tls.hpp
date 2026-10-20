@@ -13,16 +13,14 @@
 // in normal operation (see --no-tls in sender/receiver for the one
 // exception, a matched-pair debug flag for local benchmarking only).
 //
-// This is encryption without receiver authentication: the receiver
-// generates a fresh self-signed certificate every time it starts, and the
-// sender accepts any certificate (SSL_VERIFY_NONE) rather than checking it
-// against a trust anchor. There is no established identity to check it
-// against — this is a peer-to-peer tool, not a service with a stable,
-// publishable certificate. That protects the transfer against passive
-// eavesdropping on the wire but NOT against an active machine-in-the-middle
-// on the very first connection to a given receiver. Pinning the
-// certificate's fingerprint on repeat connections (SSH-host-key style)
-// would close that gap; it isn't implemented here.
+// The receiver generates one self-signed certificate per process and
+// publishes its SHA-256 fingerprint in its "listening" event. A sender run
+// with --pin-sha256 checks the presented certificate against that
+// fingerprint, which closes the machine-in-the-middle gap as long as the
+// fingerprint reaches the sender over a channel it already trusts (the
+// apps relay it through the backend over HTTPS). Without --pin-sha256 the
+// sender accepts any certificate (SSL_VERIFY_NONE): encryption against
+// passive eavesdropping, but no receiver authentication.
 //
 // Threading note: exactly one thread may call the send-side functions here
 // and, concurrently, exactly one (different) thread may call the recv-side
@@ -212,6 +210,49 @@ inline void closeTlsConnection(SSL *ssl)
     SSL_free(ssl);
 }
 
+// Lowercase hex SHA-256 of the certificate's DER encoding, the same value
+// `openssl x509 -fingerprint -sha256` prints (without the colons).
+inline std::string certificateSha256(X509 *cert)
+{
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int length = 0;
+
+    if (!cert || X509_digest(cert, EVP_sha256(), digest, &length) != 1)
+        return "";
+
+    static const char *hex = "0123456789abcdef";
+
+    std::string out;
+
+    for (unsigned int i = 0; i < length; i++)
+    {
+        out += hex[digest[i] >> 4];
+        out += hex[digest[i] & 0x0f];
+    }
+
+    return out;
+}
+
+inline std::string serverCertificateSha256(SSL_CTX *ctx)
+{
+    return certificateSha256(SSL_CTX_get0_certificate(ctx));
+}
+
+inline std::string peerCertificateSha256(SSL *ssl)
+{
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    X509 *cert = SSL_get1_peer_certificate(ssl);
+#else
+    X509 *cert = SSL_get_peer_certificate(ssl);
+#endif
+
+    std::string fingerprint = certificateSha256(cert);
+
+    X509_free(cert);
+
+    return fingerprint;
+}
+
 inline std::string tlsConnectionSummary(SSL *ssl)
 {
     return std::string(SSL_get_version(ssl)) + " " + SSL_get_cipher(ssl);
@@ -219,10 +260,26 @@ inline std::string tlsConnectionSummary(SSL *ssl)
 
 // -- send/recv over TLS, mirroring network_utils.hpp's raw-socket versions --
 
+// On a blocking socket with SO_RCVTIMEO/SO_SNDTIMEO set, an expired timeout
+// surfaces from OpenSSL as WANT_READ/WANT_WRITE (the socket BIO saw
+// EAGAIN/WSAETIMEDOUT and asked to be retried), or as SYSCALL with the
+// timeout still in the socket error.
+inline bool tlsFailureWasTimeout(SSL *ssl, int ret)
+{
+    int err = SSL_get_error(ssl, ret);
+
+    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+        return true;
+
+    return err == SSL_ERROR_SYSCALL && isTimeoutError(lastSocketError());
+}
+
 inline bool tlsSendAll(SSL *ssl, const char *data, int size)
 {
     if (size < 0)
         return false;
+
+    lastIoTimedOutFlag() = false;
 
     int total = 0;
 
@@ -231,7 +288,10 @@ inline bool tlsSendAll(SSL *ssl, const char *data, int size)
         int sent = SSL_write(ssl, data + total, size - total);
 
         if (sent <= 0)
+        {
+            lastIoTimedOutFlag() = tlsFailureWasTimeout(ssl, sent);
             return false;
+        }
 
         total += sent;
     }
@@ -244,6 +304,8 @@ inline bool tlsRecvAll(SSL *ssl, char *data, int size)
     if (size < 0)
         return false;
 
+    lastIoTimedOutFlag() = false;
+
     int total = 0;
 
     while (total < size)
@@ -251,7 +313,10 @@ inline bool tlsRecvAll(SSL *ssl, char *data, int size)
         int received = SSL_read(ssl, data + total, size - total);
 
         if (received <= 0)
+        {
+            lastIoTimedOutFlag() = tlsFailureWasTimeout(ssl, received);
             return false;
+        }
 
         total += received;
     }

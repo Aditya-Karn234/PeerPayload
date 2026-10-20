@@ -7,6 +7,7 @@
 #include <vector>
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <atomic>
 #include <mutex>
 #include <thread>
@@ -35,6 +36,12 @@ namespace
 // huge. Larger windows help more as RTT grows.
 constexpr uint32_t DEFAULT_WINDOW = 16;
 
+// Seconds a single send/recv may block before the peer is treated as gone.
+// Per call, not per transfer, so it only has to exceed the time for one
+// chunk's ack to come back: 120 s covers an 8 MiB chunk on a ~0.5 Mbit/s
+// link. 0 disables it.
+constexpr int DEFAULT_IDLE_TIMEOUT_SEC = 120;
+
 struct Options
 {
     std::string host = "127.0.0.1";
@@ -45,6 +52,8 @@ struct Options
     std::string benchPath;
     bool noTls = false;
     std::string token;
+    int idleTimeoutSec = DEFAULT_IDLE_TIMEOUT_SEC;
+    std::string pinSha256;
     std::vector<std::string> inputs;
 };
 
@@ -85,15 +94,19 @@ void printUsage()
         << "                           Only meaningful if the receiver was started with\n"
         << "                           --token too; a receiver with no token set ignores\n"
         << "                           this and accepts any sender.\n"
+        << "      --idle-timeout <sec> give up if the receiver goes silent this long\n"
+        << "                           (default " << DEFAULT_IDLE_TIMEOUT_SEC << ", 0 = never)\n"
+        << "      --pin-sha256 <hex>   require the receiver's certificate to have this\n"
+        << "                           SHA-256 fingerprint (from its \"listening\" event)\n"
         << "      --help               show this message\n"
         << "\n"
         << "Directories are sent recursively; the directory name is kept as\n"
         << "the top level of each path on the receiver.\n"
         << "\n"
         << "The connection is TLS-encrypted by default. The receiver's certificate\n"
-        << "is self-signed and generated fresh each run, so this protects against\n"
-        << "passive eavesdropping but not an active machine-in-the-middle on first\n"
-        << "connection — there's no trust anchor to check it against.\n"
+        << "is self-signed and generated fresh each run. Without --pin-sha256 this\n"
+        << "protects against passive eavesdropping but not an active machine-in-the-\n"
+        << "middle; with it, the sender refuses any certificate but the pinned one.\n"
         << "\n"
         << "Progress is reported as newline-delimited JSON on stdout, one\n"
         << "object per event; diagnostics for a human go to stderr.\n";
@@ -139,6 +152,41 @@ bool parseUInt32(const std::string &text, uint32_t &out)
     {
         return false;
     }
+}
+
+bool parseNonNegativeInt(const std::string &text, int &out)
+{
+    try
+    {
+        size_t consumed = 0;
+
+        int value = std::stoi(text, &consumed);
+
+        if (consumed != text.size() || value < 0)
+            return false;
+
+        out = value;
+
+        return true;
+    }
+    catch (const std::exception &)
+    {
+        return false;
+    }
+}
+
+bool isHexSha256(const std::string &text)
+{
+    if (text.size() != 64)
+        return false;
+
+    for (char c : text)
+    {
+        if (!std::isxdigit(static_cast<unsigned char>(c)))
+            return false;
+    }
+
+    return true;
 }
 
 bool parseArgs(int argc, char **argv, Options &options)
@@ -277,6 +325,45 @@ bool parseArgs(int argc, char **argv, Options &options)
             continue;
         }
 
+        if (arg == "--idle-timeout")
+        {
+            if (++i >= argc)
+            {
+                std::cerr << "Missing value for " << arg << '\n';
+                return false;
+            }
+
+            if (!parseNonNegativeInt(argv[i], options.idleTimeoutSec))
+            {
+                std::cerr << "Invalid idle timeout: " << argv[i] << '\n';
+                return false;
+            }
+
+            continue;
+        }
+
+        if (arg == "--pin-sha256")
+        {
+            if (++i >= argc)
+            {
+                std::cerr << "Missing value for " << arg << '\n';
+                return false;
+            }
+
+            options.pinSha256 = argv[i];
+
+            if (!isHexSha256(options.pinSha256))
+            {
+                std::cerr << "Invalid --pin-sha256: expected 64 hex characters\n";
+                return false;
+            }
+
+            for (char &c : options.pinSha256)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+            continue;
+        }
+
         if (!arg.empty() && arg[0] == '-' && arg != "-")
         {
             std::cerr << "Unknown option: " << arg << '\n';
@@ -290,6 +377,12 @@ bool parseArgs(int argc, char **argv, Options &options)
     {
         std::cerr << "No input files given.\n\n";
         printUsage();
+        return false;
+    }
+
+    if (options.noTls && !options.pinSha256.empty())
+    {
+        std::cerr << "--pin-sha256 requires TLS; it can't be combined with --no-tls\n";
         return false;
     }
 
@@ -537,6 +630,14 @@ const char *sessionRejectionCode(uint8_t reason)
     }
 }
 
+// Reason code for a failed network call: "peer_timeout" when the idle
+// timeout expired (the peer went silent), otherwise the caller's specific
+// reason. Must run on the thread whose call failed.
+const char *ioFailureReason(const char *reason)
+{
+    return lastIoTimedOut() ? "peer_timeout" : reason;
+}
+
 void emitTransferFailed(
     const std::string &transferId,
     const std::string &reason,
@@ -729,7 +830,7 @@ void senderThreadFn(const Transport &transport, PipelineContext &ctx, BenchLog &
 
         if (!ok)
         {
-            ctx.abort("chunk_send_failed");
+            ctx.abort(ioFailureReason("chunk_send_failed"));
             return;
         }
 
@@ -767,7 +868,7 @@ void ackListenerThreadFn(
 
         if (!received_ok)
         {
-            ctx.abort("ack_receive_failed");
+            ctx.abort(ioFailureReason("ack_receive_failed"));
             return;
         }
 
@@ -837,7 +938,7 @@ SendResult sendOneFile(
     if (!transportSendStruct(transport, fileHeader))
     {
         std::cerr << "FileHeader send failed\n";
-        return {false, "file_header_send_failed"};
+        return {false, ioFailureReason("file_header_send_failed")};
     }
 
     ResumeInfo resume{};
@@ -845,7 +946,7 @@ SendResult sendOneFile(
     if (!transportRecvStruct(transport, resume))
     {
         std::cerr << "Resume handshake failed\n";
-        return {false, "resume_handshake_failed"};
+        return {false, ioFailureReason("resume_handshake_failed")};
     }
 
     uint64_t chunkCount =
@@ -948,7 +1049,7 @@ SendResult sendOneFile(
     if (!transportSendStruct(transport, terminator))
     {
         std::cerr << "End-of-file marker send failed\n";
-        return {false, "eof_marker_send_failed"};
+        return {false, ioFailureReason("eof_marker_send_failed")};
     }
 
     FileDone done{};
@@ -956,7 +1057,7 @@ SendResult sendOneFile(
     if (!transportRecvStruct(transport, done))
     {
         std::cerr << "End-of-file confirmation failed\n";
-        return {false, "eof_confirmation_failed"};
+        return {false, ioFailureReason("eof_confirmation_failed")};
     }
 
     if (!done.ok)
@@ -1030,6 +1131,11 @@ int main(int argc, char **argv)
         sock,
         static_cast<int>(std::min(windowBytes, MAX_SOCKET_BUFFER)));
 
+    // Set before the TLS handshake so a receiver that accepts the TCP
+    // connection but never answers can't hang the handshake either.
+    setSocketTimeouts(sock, options.idleTimeoutSec * 1000);
+    enableKeepalive(sock);
+
     SSL_CTX *tlsCtx = nullptr;
     SSL *tlsConn = nullptr;
 
@@ -1059,6 +1165,24 @@ int main(int argc, char **argv)
             platformSocketCleanup();
             return 1;
         }
+
+        if (!options.pinSha256.empty())
+        {
+            std::string presented = peerCertificateSha256(tlsConn);
+
+            if (presented != options.pinSha256)
+            {
+                std::cerr
+                    << "Receiver certificate does not match --pin-sha256 (got "
+                    << (presented.empty() ? "none" : presented) << ")\n";
+                emitTransferFailed(transferId, "tls_pin_mismatch");
+                closeTlsConnection(tlsConn);
+                SSL_CTX_free(tlsCtx);
+                closesocket(sock);
+                platformSocketCleanup();
+                return 1;
+            }
+        }
     }
 
     Transport transport{sock, tlsConn};
@@ -1082,7 +1206,7 @@ int main(int argc, char **argv)
     if (!transportSendStruct(transport, session))
     {
         std::cerr << "SessionHeader send failed\n";
-        emitTransferFailed(transferId, "session_send_failed");
+        emitTransferFailed(transferId, ioFailureReason("session_send_failed"));
         exitCode = 1;
     }
     else
@@ -1092,7 +1216,7 @@ int main(int argc, char **argv)
         if (!transportRecvStruct(transport, ack))
         {
             std::cerr << "No session response from receiver\n";
-            emitTransferFailed(transferId, "no_session_response");
+            emitTransferFailed(transferId, ioFailureReason("no_session_response"));
             exitCode = 1;
         }
         else if (!ack.accepted)
@@ -1118,7 +1242,12 @@ int main(int argc, char **argv)
                 .field("tls", tlsConn != nullptr);
 
             if (tlsConn)
-                sessionStartEvent.field("tlsSummary", tlsConnectionSummary(tlsConn));
+            {
+                sessionStartEvent
+                    .field("tlsSummary", tlsConnectionSummary(tlsConn))
+                    .field("certSha256", peerCertificateSha256(tlsConn))
+                    .field("pinned", !options.pinSha256.empty());
+            }
 
             sessionStartEvent.emit();
 

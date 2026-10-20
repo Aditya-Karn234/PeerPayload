@@ -24,6 +24,9 @@ namespace fs = std::filesystem;
 namespace
 {
 
+// See sender/src/main.cpp: per-call, so it only has to outlast one chunk.
+constexpr int DEFAULT_IDLE_TIMEOUT_SEC = 120;
+
 struct Options
 {
     int port = DEFAULT_PORT;
@@ -31,6 +34,9 @@ struct Options
     std::string transferId;
     bool noTls = false;
     std::string token;
+    int idleTimeoutSec = DEFAULT_IDLE_TIMEOUT_SEC;
+    int listenTimeoutSec = 0;
+    int maxRetries = 0;
 };
 
 struct FileOutcome
@@ -57,14 +63,24 @@ void printUsage()
         << "                           (max " << (TOKEN_LEN - 1) << " bytes). Omit to accept any sender —\n"
         << "                           only safe on a trusted network for a short-lived\n"
         << "                           listen window.\n"
+        << "      --idle-timeout <sec> drop a connection whose sender goes silent this\n"
+        << "                           long (default " << DEFAULT_IDLE_TIMEOUT_SEC << ", 0 = never)\n"
+        << "      --listen-timeout <sec> give up if no sender connects within this long\n"
+        << "                           (and again after each retryable failure;\n"
+        << "                           default 0 = wait forever)\n"
+        << "      --max-retries <n>    after a session fails for a network reason (link\n"
+        << "                           dropped, peer timeout, corrupted chunk), keep\n"
+        << "                           listening so the sender can reconnect and resume,\n"
+        << "                           up to n times (default 0 = exit on first failure)\n"
         << "      --help               show this message\n"
         << "\n"
         << "Resume state lives in <dir>/transfer.state and is removed once a\n"
         << "session finishes cleanly.\n"
         << "\n"
-        << "The connection is TLS-encrypted by default, using a fresh self-signed\n"
-        << "certificate generated on every start — see sender --help for what that\n"
-        << "does and doesn't protect against.\n"
+        << "The connection is TLS-encrypted by default, using a self-signed\n"
+        << "certificate generated once per run. Its SHA-256 fingerprint is in the\n"
+        << "\"listening\" event; pass it to sender --pin-sha256 to authenticate this\n"
+        << "receiver.\n"
         << "\n"
         << "Progress is reported as newline-delimited JSON on stdout, one\n"
         << "object per event; diagnostics for a human go to stderr.\n";
@@ -79,6 +95,27 @@ bool parsePort(const std::string &text, int &out)
         int value = std::stoi(text, &consumed);
 
         if (consumed != text.size() || value < 1 || value > 65535)
+            return false;
+
+        out = value;
+
+        return true;
+    }
+    catch (const std::exception &)
+    {
+        return false;
+    }
+}
+
+bool parseNonNegativeInt(const std::string &text, int &out)
+{
+    try
+    {
+        size_t consumed = 0;
+
+        int value = std::stoi(text, &consumed);
+
+        if (consumed != text.size() || value < 0)
             return false;
 
         out = value;
@@ -153,6 +190,28 @@ bool parseArgs(int argc, char **argv, Options &options)
             continue;
         }
 
+        if (arg == "--idle-timeout" || arg == "--listen-timeout" || arg == "--max-retries")
+        {
+            if (++i >= argc)
+            {
+                std::cerr << "Missing value for " << arg << '\n';
+                return false;
+            }
+
+            int &target =
+                arg == "--idle-timeout" ? options.idleTimeoutSec
+                : arg == "--listen-timeout" ? options.listenTimeoutSec
+                : options.maxRetries;
+
+            if (!parseNonNegativeInt(argv[i], target))
+            {
+                std::cerr << "Invalid value for " << arg << ": " << argv[i] << '\n';
+                return false;
+            }
+
+            continue;
+        }
+
         if (arg == "--token")
         {
             if (++i >= argc)
@@ -180,6 +239,12 @@ bool parseArgs(int argc, char **argv, Options &options)
     }
 
     return true;
+}
+
+// See sender/src/main.cpp: "peer_timeout" when the idle timeout expired.
+const char *ioFailureReason(const char *reason)
+{
+    return lastIoTimedOut() ? "peer_timeout" : reason;
 }
 
 void emitTransferFailed(
@@ -330,7 +395,7 @@ FileOutcome receiveOneFile(
     if (!transportRecvStruct(transport, header))
     {
         std::cerr << "FileHeader receive failed\n";
-        return {false, "file_header_receive_failed", ""};
+        return {false, ioFailureReason("file_header_receive_failed"), ""};
     }
 
     std::string relPath;
@@ -396,7 +461,7 @@ FileOutcome receiveOneFile(
     if (!transportSendStruct(transport, resume))
     {
         std::cerr << "Resume handshake failed\n";
-        return {false, "resume_handshake_failed", relPath};
+        return {false, ioFailureReason("resume_handshake_failed"), relPath};
     }
 
     std::fstream out;
@@ -428,7 +493,7 @@ FileOutcome receiveOneFile(
         if (!transportRecvStruct(transport, chunk))
         {
             std::cerr << "Chunk header receive failed\n";
-            return {false, "chunk_header_receive_failed", relPath};
+            return {false, ioFailureReason("chunk_header_receive_failed"), relPath};
         }
 
         if (chunk.chunkSize == 0)
@@ -460,7 +525,7 @@ FileOutcome receiveOneFile(
                 static_cast<int>(chunk.chunkSize)))
         {
             std::cerr << "Chunk receive failed\n";
-            return {false, "chunk_receive_failed", relPath};
+            return {false, ioFailureReason("chunk_receive_failed"), relPath};
         }
 
         auto calculated =
@@ -528,7 +593,7 @@ FileOutcome receiveOneFile(
         if (!transportSendStruct(transport, ack))
         {
             std::cerr << "ACK send failed\n";
-            return {false, "ack_send_failed", relPath};
+            return {false, ioFailureReason("ack_send_failed"), relPath};
         }
 
         JsonEvent("chunk_verified")
@@ -579,7 +644,7 @@ FileOutcome receiveOneFile(
     if (!transportSendStruct(transport, done))
     {
         std::cerr << "Completion notice send failed\n";
-        return {false, "completion_notice_send_failed", relPath};
+        return {false, ioFailureReason("completion_notice_send_failed"), relPath};
     }
 
     JsonEvent("file_complete")
@@ -617,8 +682,8 @@ bool tokenMatches(const char (&received)[TOKEN_LEN], const std::string &expected
 // gets from scanners, health-checks, or a sender with the wrong details, and
 // none of that means the transfer this receiver was started for is over.
 // false means a local problem (e.g. can't create the output directory) that
-// will keep failing every future connection too, so the caller should stop
-// and report it loudly instead of silently absorbing every attempt.
+// will keep failing every future connection too; the caller reports it as
+// the transfer's final failure instead of silently absorbing every attempt.
 void rejectSession(
     const Transport &transport,
     const std::string &transferId,
@@ -631,8 +696,6 @@ void rejectSession(
 
     if (retryable)
         emitConnectionRejected(transferId, reasonCode);
-    else
-        emitTransferFailed(transferId, reasonCode);
 
     SessionAck ack{};
 
@@ -642,18 +705,58 @@ void rejectSession(
     transportSendStruct(transport, ack);
 }
 
-// sessionFinal (out param, caller pre-sets false): becomes true once this
-// connection has passed every handshake check and this receiver has
-// committed to it, or once a non-retryable local failure means every
-// future connection would fail the same way — from that point, whatever
-// runSession returns is this process's final word, not something the
-// caller should retry past.
-bool runSession(
+enum class SessionResult
+{
+    // Refused before committing (scanner, wrong token, bad header): not
+    // about this transfer, keep listening.
+    Rejected,
+    Completed,
+    // Committed session (or a local setup step) failed; see retryable.
+    Failed,
+};
+
+struct SessionOutcome
+{
+    SessionResult result = SessionResult::Rejected;
+    // Failed only: true when the cause is the connection or the peer
+    // (dropped link, timeout, corrupted chunk) so a reconnecting sender can
+    // resume; false when it's local or a protocol violation that a retry
+    // would just repeat (disk, bad path, out-of-order chunks).
+    bool retryable = false;
+    std::string reason;
+    std::string relPath;
+};
+
+bool isRetryableReason(const std::string &reason)
+{
+    static const char *retryable[] = {
+        "peer_timeout",
+        "file_header_receive_failed",
+        "resume_handshake_failed",
+        "chunk_header_receive_failed",
+        "chunk_receive_failed",
+        "chunk_mismatch",
+        "ack_send_failed",
+        "completion_notice_send_failed",
+        "session_ack_send_failed",
+    };
+
+    for (const char *r : retryable)
+    {
+        if (reason == r)
+            return true;
+    }
+
+    return false;
+}
+
+SessionOutcome runSession(
     const Transport &transport,
     const std::string &transferId,
-    const Options &options,
-    bool &sessionFinal)
+    const Options &options)
 {
+    SessionOutcome outcome;
+
     SessionHeader session{};
 
     if (!transportRecvStruct(transport, session))
@@ -662,8 +765,8 @@ bool runSession(
         // health-check) looks identical from here. Nothing to ack; the peer
         // is already gone.
         std::cerr << "SessionHeader receive failed\n";
-        emitConnectionRejected(transferId, "session_header_receive_failed");
-        return false;
+        emitConnectionRejected(transferId, ioFailureReason("session_header_receive_failed"));
+        return outcome;
     }
 
     if (session.magic != PROTOCOL_MAGIC)
@@ -675,7 +778,7 @@ bool runSession(
             "session_bad_magic",
             "Peer is not speaking this protocol",
             true);
-        return false;
+        return outcome;
     }
 
     if (session.version != PROTOCOL_VERSION)
@@ -691,7 +794,7 @@ bool runSession(
             "session_bad_version",
             "Refusing mismatched protocol version",
             true);
-        return false;
+        return outcome;
     }
 
     // Checked before anything else about the request's content — an
@@ -707,7 +810,7 @@ bool runSession(
             "session_auth_failed",
             "Rejected sender: token did not match",
             true);
-        return false;
+        return outcome;
     }
 
     if (session.fileCount == 0 || session.fileCount > MAX_FILE_COUNT)
@@ -719,7 +822,7 @@ bool runSession(
             "session_bad_count",
             "Implausible file count in session header",
             true);
-        return false;
+        return outcome;
     }
 
     if (session.chunkSize < MIN_CHUNK_SIZE || session.chunkSize > MAX_CHUNK_SIZE)
@@ -731,7 +834,7 @@ bool runSession(
             "session_bad_chunk_size",
             "Implausible chunk size in session header",
             true);
-        return false;
+        return outcome;
     }
 
     // The sender doesn't tell us its window size, so this can't match its
@@ -760,14 +863,16 @@ bool runSession(
             "session_local_error",
             "Cannot create the output directory",
             false);
-        sessionFinal = true;
-        return false;
+
+        outcome.result = SessionResult::Failed;
+        outcome.reason = "session_local_error";
+        return outcome;
     }
 
     // Every handshake check passed — this session is happening. Anything
     // that goes wrong from here is a real failure to report, not noise to
     // shrug off and keep listening past.
-    sessionFinal = true;
+    outcome.result = SessionResult::Failed;
 
     SessionAck ack{};
 
@@ -777,8 +882,9 @@ bool runSession(
     if (!transportSendStruct(transport, ack))
     {
         std::cerr << "Session acknowledgement failed\n";
-        emitTransferFailed(transferId, "session_ack_send_failed");
-        return false;
+        outcome.reason = ioFailureReason("session_ack_send_failed");
+        outcome.retryable = true;
+        return outcome;
     }
 
     TransferState state(options.outputDir / "transfer.state");
@@ -804,7 +910,7 @@ bool runSession(
 
     for (uint64_t i = 0; i < session.fileCount; i++)
     {
-        FileOutcome outcome =
+        FileOutcome file =
             receiveOneFile(
                 transport,
                 transferId,
@@ -814,11 +920,14 @@ bool runSession(
                 options,
                 state);
 
-        if (!outcome.ok)
+        if (!file.ok)
         {
             state.save();
-            emitTransferFailed(transferId, outcome.reason, outcome.relPath);
-            return false;
+
+            outcome.reason = file.reason;
+            outcome.relPath = file.relPath;
+            outcome.retryable = isRetryableReason(file.reason);
+            return outcome;
         }
     }
 
@@ -835,7 +944,8 @@ bool runSession(
         .field("elapsedMs", static_cast<uint64_t>(elapsed.count()))
         .emit();
 
-    return true;
+    outcome.result = SessionResult::Completed;
+    return outcome;
 }
 
 } // namespace
@@ -859,27 +969,90 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    // One certificate for the whole process, made before listening: its
+    // fingerprint has to be known up front so it can be published in the
+    // "listening" event (and pinned by the sender), and a port scanner no
+    // longer costs an RSA key generation per connection.
+    SSL_CTX *tlsCtx = nullptr;
+    std::string certSha256;
+
+    if (!options.noTls)
+    {
+        std::string tlsError;
+
+        tlsCtx = createServerTlsContext(tlsError);
+
+        if (!tlsCtx)
+        {
+            std::cerr << "TLS context setup failed: " << tlsError << '\n';
+            emitTransferFailed(transferId, "tls_context_failed");
+            platformSocketCleanup();
+            return 1;
+        }
+
+        certSha256 = serverCertificateSha256(tlsCtx);
+    }
+
+    auto cleanup = [&](SOCKET listener) {
+        if (listener != INVALID_SOCKET)
+            closesocket(listener);
+
+        if (tlsCtx)
+            SSL_CTX_free(tlsCtx);
+
+        platformSocketCleanup();
+    };
+
     SOCKET listener = openListener(transferId, options.port);
 
     if (listener == INVALID_SOCKET)
     {
-        platformSocketCleanup();
+        cleanup(INVALID_SOCKET);
         return 1;
     }
 
-    JsonEvent("listening")
-        .field("transferId", transferId)
-        .field("port", options.port)
-        .emit();
+    JsonEvent listeningEvent("listening");
 
-    // Keeps accepting connections until one actually becomes a session this
-    // receiver commits to (sessionFinal) or something local and
-    // non-peer-dependent breaks. An exposed port gets scanned, health-
-    // checked, and occasionally hit by a sender with the wrong token —
-    // none of that should require the operator to notice and manually
-    // restart the receiver before the real sender's connection can land.
+    listeningEvent
+        .field("transferId", transferId)
+        .field("port", options.port);
+
+    if (tlsCtx)
+        listeningEvent.field("certSha256", certSha256);
+
+    listeningEvent.emit();
+
+    using Clock = std::chrono::steady_clock;
+
+    auto armDeadline = [&]() {
+        return Clock::now() + std::chrono::seconds(options.listenTimeoutSec);
+    };
+
+    auto deadline = armDeadline();
+    int failedSessions = 0;
+
+    // Keeps accepting connections until one completes, a failure is final,
+    // or the listen deadline passes. An exposed port gets scanned, health-
+    // checked, and occasionally hit by a sender with the wrong token — none
+    // of that should require the operator to notice and manually restart
+    // the receiver before the real sender's connection can land.
     for (;;)
     {
+        if (options.listenTimeoutSec > 0)
+        {
+            auto remaining =
+                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
+
+            if (remaining <= 0 || !waitReadable(listener, static_cast<int>(remaining)))
+            {
+                std::cerr
+                    << "No sender connected within " << options.listenTimeoutSec << " s\n";
+                emitTransferFailed(transferId, "listen_timeout");
+                cleanup(listener);
+                return 1;
+            }
+        }
+
         sockaddr_in peer{};
 
         platform_socklen_t peerLength = sizeof(peer);
@@ -897,8 +1070,7 @@ int main(int argc, char **argv)
             // wouldn't help.
             std::cerr << "Accept failed: " << socketErrorText() << '\n';
             emitTransferFailed(transferId, "accept_failed");
-            closesocket(listener);
-            platformSocketCleanup();
+            cleanup(listener);
             return 1;
         }
 
@@ -911,28 +1083,16 @@ int main(int argc, char **argv)
             .field("peer", std::string(peerText))
             .emit();
 
-        SSL_CTX *tlsCtx = nullptr;
-        SSL *tlsConn = nullptr;
-        bool sessionFinal = false;
-        bool ok = false;
+        // Before the handshake, so a peer that connects and then says
+        // nothing (slowloris, half-open scan) can't pin the receiver.
+        setSocketTimeouts(client, options.idleTimeoutSec * 1000);
+        enableKeepalive(client);
 
-        if (!options.noTls)
+        SSL *tlsConn = nullptr;
+
+        if (tlsCtx)
         {
             std::string tlsError;
-
-            tlsCtx = createServerTlsContext(tlsError);
-
-            if (!tlsCtx)
-            {
-                // Our own cert generation failed — a local problem that
-                // will fail identically for every future connection too.
-                std::cerr << "TLS context setup failed: " << tlsError << '\n';
-                emitTransferFailed(transferId, "tls_context_failed");
-                closesocket(client);
-                closesocket(listener);
-                platformSocketCleanup();
-                return 1;
-            }
 
             tlsConn = performServerHandshake(tlsCtx, client, tlsError);
 
@@ -944,31 +1104,62 @@ int main(int argc, char **argv)
                 // listening for the real sender.
                 std::cerr << "TLS handshake failed: " << tlsError << '\n';
                 emitConnectionRejected(transferId, "tls_handshake_failed");
-                SSL_CTX_free(tlsCtx);
                 closesocket(client);
                 continue;
             }
         }
 
+        SessionOutcome outcome;
+
         {
             Transport transport{client, tlsConn};
 
-            ok = runSession(transport, transferId, options, sessionFinal);
+            outcome = runSession(transport, transferId, options);
         }
 
         if (tlsConn)
             closeTlsConnection(tlsConn);
 
-        if (tlsCtx)
-            SSL_CTX_free(tlsCtx);
-
         closesocket(client);
 
-        if (sessionFinal)
+        if (outcome.result == SessionResult::Rejected)
+            continue;
+
+        if (outcome.result == SessionResult::Completed)
         {
-            closesocket(listener);
-            platformSocketCleanup();
-            return ok ? 0 : 1;
+            cleanup(listener);
+            return 0;
         }
+
+        if (outcome.retryable && failedSessions < options.maxRetries)
+        {
+            failedSessions++;
+
+            std::cerr
+                << "Session failed (" << outcome.reason << "); waiting for the sender to reconnect ("
+                << (options.maxRetries - failedSessions) << " retries left after this one)\n";
+
+            // Not transfer_failed: the transfer isn't over, the resume state
+            // is saved, and the same sender can reconnect and continue.
+            JsonEvent event("session_failed");
+
+            event
+                .field("transferId", transferId)
+                .field("reason", outcome.reason)
+                .field("attempt", failedSessions)
+                .field("retriesLeft", options.maxRetries - failedSessions);
+
+            if (!outcome.relPath.empty())
+                event.field("relPath", outcome.relPath);
+
+            event.emit();
+
+            deadline = armDeadline();
+            continue;
+        }
+
+        emitTransferFailed(transferId, outcome.reason, outcome.relPath);
+        cleanup(listener);
+        return 1;
     }
 }

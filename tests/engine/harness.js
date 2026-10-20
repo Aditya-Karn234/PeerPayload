@@ -159,21 +159,23 @@ function summarize(events) {
   return events.map(eventType).join(", ") || "(none)";
 }
 
-async function startReceiver({ port, outDir, noTls = false, token, transferId = "test", env } = {}) {
+async function startReceiver({ port, outDir, noTls = false, token, transferId = "test", env, args: extraArgs = [] } = {}) {
   port = port ?? (await freePort());
   const args = ["-p", String(port), "-o", outDir, "--transfer-id", transferId];
   if (noTls) args.push("--no-tls");
   if (token) args.push("--token", token);
+  args.push(...extraArgs);
   const proc = spawnEngine(receiverPath, args, env);
   proc.port = port;
   await proc.waitFor("listening");
   return proc;
 }
 
-function startSender({ port, host = "127.0.0.1", sources, noTls = false, token, chunkSize, window, transferId = "test", env } = {}) {
+function startSender({ port, host = "127.0.0.1", sources, noTls = false, token, chunkSize, window, transferId = "test", env, args: extraArgs = [] } = {}) {
   const args = ["-h", host, "-p", String(port), "--transfer-id", transferId];
   if (noTls) args.push("--no-tls");
   if (token) args.push("--token", token);
+  args.push(...extraArgs);
   if (chunkSize) args.push("--chunk-size", String(chunkSize));
   if (window) args.push("--window", String(window));
   args.push(...(Array.isArray(sources) ? sources : [sources]));
@@ -210,7 +212,11 @@ function withTimeout(promise, ms, message) {
 //                  both sides — a deterministic stand-in for a dropped link
 //                  mid-transfer (works under TLS too, since it never parses).
 //   corruptAtByte: flip one sender->receiver byte at this stream offset.
-function startFaultProxy({ upstreamPort, cutAfterBytes, corruptAtByte }) {
+//   freezeAfterBytes: forward this many sender->receiver bytes, then stop
+//                  forwarding in both directions WITHOUT closing anything —
+//                  a peer that went silent (sleep, Wi-Fi drop) with no
+//                  FIN/RST, which only an idle timeout can detect.
+function startFaultProxy({ upstreamPort, cutAfterBytes, corruptAtByte, freezeAfterBytes }) {
   return new Promise((resolve, reject) => {
     const sockets = new Set();
     const server = net.createServer((client) => {
@@ -224,6 +230,14 @@ function startFaultProxy({ upstreamPort, cutAfterBytes, corruptAtByte }) {
       };
 
       client.on("data", (chunk) => {
+        if (proxy.frozen) return;
+        if (freezeAfterBytes !== undefined && forwarded + chunk.length >= freezeAfterBytes) {
+          const keep = Math.max(0, freezeAfterBytes - forwarded);
+          if (keep > 0) upstream.write(chunk.subarray(0, keep));
+          forwarded += keep;
+          proxy.frozen = true;
+          return;
+        }
         if (cutAfterBytes !== undefined && forwarded + chunk.length >= cutAfterBytes) {
           const keep = Math.max(0, cutAfterBytes - forwarded);
           if (keep > 0) upstream.write(chunk.subarray(0, keep));
@@ -243,12 +257,14 @@ function startFaultProxy({ upstreamPort, cutAfterBytes, corruptAtByte }) {
         upstream.write(chunk);
       });
       upstream.on("data", (chunk) => {
-        if (!client.destroyed) client.write(chunk);
+        if (!proxy.frozen && !client.destroyed) client.write(chunk);
       });
-      client.on("end", () => upstream.end());
-      upstream.on("end", () => client.end());
-      client.on("error", destroyBoth);
-      upstream.on("error", destroyBoth);
+      // Once frozen, nothing crosses the proxy — not even a close — so each
+      // side has to notice the silence on its own.
+      client.on("end", () => !proxy.frozen && upstream.end());
+      upstream.on("end", () => !proxy.frozen && client.end());
+      client.on("error", () => (proxy.frozen ? client.destroy() : destroyBoth()));
+      upstream.on("error", () => (proxy.frozen ? upstream.destroy() : destroyBoth()));
       client.on("close", () => sockets.delete(client));
       upstream.on("close", () => sockets.delete(upstream));
     });
@@ -256,6 +272,7 @@ function startFaultProxy({ upstreamPort, cutAfterBytes, corruptAtByte }) {
     const proxy = {
       cut: false,
       corrupted: false,
+      frozen: false,
       port: 0,
       close() {
         for (const s of sockets) s.destroy();

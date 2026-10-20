@@ -13,6 +13,8 @@ inline bool sendAll(
     if (size < 0)
         return false;
 
+    lastIoTimedOutFlag() = false;
+
     int total = 0;
 
     while (total < size)
@@ -25,7 +27,10 @@ inline bool sendAll(
                 0);
 
         if (sent <= 0)
+        {
+            lastIoTimedOutFlag() = sent < 0 && isTimeoutError(lastSocketError());
             return false;
+        }
 
         total += sent;
     }
@@ -41,6 +46,8 @@ inline bool recvAll(
     if (size < 0)
         return false;
 
+    lastIoTimedOutFlag() = false;
+
     int total = 0;
 
     while (total < size)
@@ -53,7 +60,10 @@ inline bool recvAll(
                 0);
 
         if (received <= 0)
+        {
+            lastIoTimedOutFlag() = received < 0 && isTimeoutError(lastSocketError());
             return false;
+        }
 
         total += received;
     }
@@ -115,6 +125,73 @@ inline void tuneSocketForPipelining(SOCKET sock, int windowBytes)
         SO_RCVBUF,
         reinterpret_cast<const char *>(&windowBytes),
         sizeof(windowBytes));
+}
+
+// Bounds every blocking send()/recv() on this socket. Without it, a peer
+// that vanishes without a FIN/RST (laptop asleep, Wi-Fi or VPN dropped, NAT
+// entry expired) leaves the other side blocked in recv() forever. The
+// timeout is per call, not per transfer: a slow but live link keeps each
+// call returning, so only a genuinely silent peer trips it. 0 disables it.
+inline void setSocketTimeouts(SOCKET sock, int timeoutMs)
+{
+    if (timeoutMs <= 0)
+        return;
+
+#ifdef _WIN32
+    DWORD value = static_cast<DWORD>(timeoutMs);
+#else
+    timeval value{};
+
+    value.tv_sec = timeoutMs / 1000;
+    value.tv_usec = (timeoutMs % 1000) * 1000;
+#endif
+
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char *>(&value), sizeof(value));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char *>(&value), sizeof(value));
+}
+
+// TCP keepalive with short probe intervals, so NAT/firewall state for a
+// long transfer isn't expired as idle and a dead path is noticed by the OS
+// within about a minute rather than the default two hours. Best-effort:
+// the per-option knobs are skipped where the platform headers lack them.
+inline void enableKeepalive(SOCKET sock)
+{
+    int on = 1;
+
+    setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<const char *>(&on), sizeof(on));
+
+#if defined(TCP_KEEPIDLE)
+    int idle = 30;
+    setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, reinterpret_cast<const char *>(&idle), sizeof(idle));
+#endif
+#if defined(TCP_KEEPINTVL)
+    int interval = 10;
+    setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, reinterpret_cast<const char *>(&interval), sizeof(interval));
+#endif
+#if defined(TCP_KEEPCNT)
+    int count = 3;
+    setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, reinterpret_cast<const char *>(&count), sizeof(count));
+#endif
+}
+
+// Blocks until the socket is readable (e.g. a listener has a pending
+// connection) or timeoutMs passes. Returns false on timeout or error.
+inline bool waitReadable(SOCKET sock, int timeoutMs)
+{
+    fd_set readSet;
+
+    FD_ZERO(&readSet);
+    FD_SET(sock, &readSet);
+
+    timeval tv{};
+
+    tv.tv_sec = timeoutMs / 1000;
+    tv.tv_usec = (timeoutMs % 1000) * 1000;
+
+    // The first argument is ignored by Winsock and is nfds on POSIX.
+    int rc = select(static_cast<int>(sock) + 1, &readSet, nullptr, nullptr, &tv);
+
+    return rc > 0;
 }
 
 #ifdef _WIN32
