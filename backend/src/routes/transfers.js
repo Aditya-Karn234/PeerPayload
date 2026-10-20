@@ -4,6 +4,8 @@ const crypto = require("crypto");
 const db = require("../db");
 const presenceService = require("../services/presenceService");
 const signalBus = require("../signalBus");
+const config = require("../config");
+const { issueRelayTicket } = require("../relayTickets");
 
 const router = createRouter();
 
@@ -27,6 +29,12 @@ const TERMINAL_STATUSES = new Set([
 // offer) are kept apart from plain "failed" so the audit trail can show how
 // often direct connections fail — the data a relay decision needs.
 const REPORTABLE_STATUSES = new Set(["complete", "failed", "not_reachable", "timed_out"]);
+
+// Which route the bytes took: straight between the machines, or through the
+// relay. Recorded in the report so relay usage (and its cost) is visible.
+const TRANSFER_PATHS = new Set(["direct", "relay"]);
+
+const relayEnabled = () => Boolean(config.relayUrl && config.relaySecret);
 
 const MAX_FILE_COUNT = 1_000_000; // mirrors protocol.hpp's MAX_FILE_COUNT
 const MAX_FAIL_REASON_LENGTH = 500;
@@ -89,6 +97,7 @@ function serializeTransfer(t, { forUser } = {}) {
     // Not secret: the sender pins the receiver's TLS certificate to this,
     // and it only has to be authentic, which HTTPS to the backend gives it.
     receiverCertFingerprint: t.receiverCertFingerprint ?? null,
+    relayAvailable: relayEnabled(),
     reportedBySender: t.reportedBySender,
     reportedByReceiver: t.reportedByReceiver,
     senderReport: t.senderReport,
@@ -258,7 +267,7 @@ router.post("/:id/reject", async (req, res) => {
 // sender-owns-completion-timing convention), the receiver's is kept for
 // cross-check only.
 router.post("/:id/report", async (req, res) => {
-  const { role, status, fileCount, totalBytes, failReason, elapsedMs } = req.body || {};
+  const { role, status, fileCount, totalBytes, failReason, elapsedMs, path: transferPath, attempts } = req.body || {};
 
   if (role !== "sender" && role !== "receiver")
     return res.status(400).json({ error: 'role must be "sender" or "receiver"' });
@@ -271,6 +280,12 @@ router.post("/:id/report", async (req, res) => {
 
   if (elapsedMs !== undefined && elapsedMs !== null && (!Number.isFinite(Number(elapsedMs)) || Number(elapsedMs) < 0))
     return res.status(400).json({ error: "elapsedMs must be a non-negative number" });
+
+  if (transferPath !== undefined && transferPath !== null && !TRANSFER_PATHS.has(transferPath))
+    return res.status(400).json({ error: `path must be one of: ${[...TRANSFER_PATHS].join(", ")}` });
+
+  if (attempts !== undefined && attempts !== null && (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 100))
+    return res.status(400).json({ error: "attempts must be a positive integer" });
 
   const reportCount = parseCount("fileCount", fileCount, MAX_FILE_COUNT);
   const reportBytes = parseByteCount("totalBytes", totalBytes);
@@ -297,6 +312,8 @@ router.post("/:id/report", async (req, res) => {
     totalBytes: reportBytes.value === undefined ? undefined : reportBytes.value.toString(),
     failReason: reason,
     elapsedMs: elapsedMs === undefined || elapsedMs === null ? undefined : Number(elapsedMs),
+    path: transferPath ?? undefined,
+    attempts: attempts ?? undefined,
     reportedAt: new Date(),
   };
 
@@ -320,6 +337,32 @@ router.post("/:id/report", async (req, res) => {
   const updated = await db.transfer.update({ where: { id: transfer.id }, data });
 
   res.json(serializeTransfer(updated, { forUser: req.user }));
+});
+
+// GET /transfers/:id/relay-ticket — permission for the caller's side of
+// this transfer to use the relay. Only the two parties, only while the
+// transfer is live, and the role comes from who is asking, so a sender's
+// ticket can never be used to pose as the receiver. Each (re)connect fetches
+// a fresh one.
+router.get("/:id/relay-ticket", async (req, res) => {
+  if (!relayEnabled())
+    return res.status(404).json({ error: "relay not configured" });
+
+  const transfer = await db.transfer.findUnique({ where: { id: req.params.id } });
+
+  if (!transfer)
+    return res.status(404).json({ error: "transfer not found" });
+
+  if (!isParty(transfer, req.user))
+    return res.status(403).json({ error: "not a party to this transfer" });
+
+  if (transfer.status !== "pending" && transfer.status !== "accepted")
+    return res.status(409).json({ error: `transfer is "${transfer.status}"` });
+
+  const role = transfer.senderId === req.user.id ? "sender" : "receiver";
+  const { ticket, expiresAt } = issueRelayTicket({ transferId: transfer.id, role, ttlSec: config.relayTicketTtlSec }, config.relaySecret);
+
+  res.json({ url: config.relayUrl, ticket, role, expiresAt });
 });
 
 // The backend never touches the live connection, so this can only mark a

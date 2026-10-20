@@ -26,6 +26,33 @@ services:
         value: "2592000000"
       - key: PRESENCE_TTL_MS
         value: "45000"
+      # Relay for transfers whose machines can't reach each other directly.
+      # The backend signs relay tickets with the relay's secret; the URL is
+      # what clients connect to. If Render gives the relay a different
+      # hostname (name already taken), update RELAY_URL to match.
+      - key: RELAY_URL
+        value: wss://orgxfer-relay.onrender.com/v1/connect
+      - key: RELAY_SECRET
+        fromService:
+          name: orgxfer-relay
+          type: web
+          envVarKey: RELAY_SECRET
+
+  # Blind WebSocket relay (relay/). A separate service so relayed file bytes
+  # never compete with the API for memory, CPU or bandwidth, and so it can
+  # move to a bigger plan or a VPS on its own — clients only see RELAY_URL.
+  # Stateless: it verifies backend-signed tickets and needs no database.
+  - type: web
+    name: orgxfer-relay
+    runtime: node
+    plan: free
+    rootDir: relay
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: RELAY_SECRET
+        generateValue: true
 
 databases:
   - name: orgxfer-db
