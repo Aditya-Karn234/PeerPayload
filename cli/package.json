@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "client-core": "file:../client-core",
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "ws": "^8.18.0"
   }
 }

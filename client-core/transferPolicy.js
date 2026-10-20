@@ -1,4 +1,5 @@
 const { spawnEngineProcess } = require("./engine");
+const { startSenderBridge, startReceiverBridge, probeTcp } = require("./relayBridge");
 
 // How a client drives the engine through failures. Shared by the desktop
 // app and the CLI so both retry, resume and report identically.
@@ -66,42 +67,123 @@ function runEngineOnce(exePath, args, onEvent) {
   });
 }
 
-// Runs the sender, re-running it after retryable failures. Each re-run
+// How long the sender spends checking whether the receiver's advertised
+// address answers before falling back to the relay.
+const DIRECT_PROBE_TIMEOUT_MS = 3000;
+
+// Direct-path failures that mean "this address isn't the receiver from
+// here" rather than "the transfer broke": nothing listening, a different
+// machine that happens to own that private IP on the sender's own network
+// (pin mismatch), or something that isn't our engine. With a relay
+// available these switch paths instead of failing.
+const SWITCH_TO_RELAY_REASONS = new Set(["connection_failed", "tls_pin_mismatch", "tls_handshake_failed"]);
+
+// Runs the sender, re-running it after retryable failures; each re-run
 // resumes from wherever the receiver's resume state says it got to.
-async function runSenderWithRetries({ exePath, args, onEvent, onRetry, wait = sleep }) {
+//
+// Path per attempt: direct when the receiver's address answers (always the
+// case on a LAN/VPN), otherwise through the relay when `relay` is given.
+// Once on the relay it stays there.
+//
+//   target   { host, port } the receiver advertised at accept time
+//   baseArgs engine args without -h/-p (token, id, chunk size, pin, path)
+//   relay    { getTicket } or null when the backend has no relay configured
+async function runSender({
+  exePath,
+  baseArgs,
+  target,
+  relay = null,
+  onEvent,
+  onRetry,
+  onPath,
+  wait = sleep,
+  probe = probeTcp,
+  startBridge = startSenderBridge,
+}) {
   let connected = false;
+  let failures = 0;
+  let attempts = 0;
+  let path = null;
+  let bridge = null;
+  let switched = false;
 
-  for (let attempt = 1; ; attempt++) {
-    const finalEvent = await runEngineOnce(exePath, args, (event) => {
-      if (event.event === "session_start")
-        connected = true;
+  const usePath = (next) => {
+    if (next !== path) {
+      path = next;
+      onPath?.(path);
+    }
+  };
 
-      onEvent?.(event, attempt);
-    });
+  try {
+    for (;;) {
+      if (path !== "relay") {
+        const reachable = await probe(target.host, target.port, DIRECT_PROBE_TIMEOUT_MS);
 
-    if (finalEvent.event === "transfer_complete")
-      return { finalEvent, attempts: attempt, connected };
+        usePath(!reachable && relay ? "relay" : "direct");
+      }
 
-    const reason = finalEvent.reason;
-    const retryable = RETRYABLE_REASONS.has(reason) || (connected && RETRYABLE_AFTER_CONNECT.has(reason));
+      let host = target.host;
+      let port = target.port;
 
-    if (!retryable || attempt >= MAX_SEND_ATTEMPTS)
-      return { finalEvent, attempts: attempt, connected };
+      if (path === "relay") {
+        bridge ??= await startBridge({ getTicket: relay.getTicket });
+        host = "127.0.0.1";
+        port = bridge.port;
+      }
 
-    const delayMs = RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)];
+      attempts++;
 
-    onRetry?.({ attempt, reason, delayMs });
+      let startedThisAttempt = false;
 
-    await wait(delayMs);
+      const finalEvent = await runEngineOnce(exePath, ["-h", host, "-p", String(port), ...baseArgs], (event) => {
+        if (event.event === "session_start") {
+          connected = true;
+          startedThisAttempt = true;
+        }
+
+        onEvent?.(event, attempts, path);
+      });
+
+      if (finalEvent.event === "transfer_complete")
+        return { finalEvent, attempts, connected, path };
+
+      const reason = finalEvent.reason;
+
+      // The direct address turned out to be wrong from here: switch once,
+      // immediately, without spending one of the retry attempts.
+      if (path === "direct" && relay && !switched && !startedThisAttempt && SWITCH_TO_RELAY_REASONS.has(reason)) {
+        switched = true;
+        usePath("relay");
+        continue;
+      }
+
+      const retryable = RETRYABLE_REASONS.has(reason) || (connected && RETRYABLE_AFTER_CONNECT.has(reason));
+
+      failures++;
+
+      if (!retryable || failures >= MAX_SEND_ATTEMPTS)
+        return { finalEvent, attempts, connected, path };
+
+      const delayMs = RETRY_DELAYS_MS[Math.min(failures - 1, RETRY_DELAYS_MS.length - 1)];
+
+      onRetry?.({ attempt: attempts, reason, delayMs, path });
+
+      await wait(delayMs);
+    }
+  } finally {
+    bridge?.close();
   }
 }
 
 // Audit status for the sender's report (see backend REPORTABLE_STATUSES).
+// Never having connected through any path means the receiver couldn't be
+// reached — a refused/unanswered direct connect, or a relay pairing that
+// never completed the TLS handshake.
 function senderReportStatus({ finalEvent, connected }) {
   if (finalEvent.event === "transfer_complete")
     return "complete";
 
-  if (finalEvent.reason === "connection_failed" && !connected)
+  if (!connected && ["connection_failed", "tls_handshake_failed"].includes(finalEvent.reason))
     return "not_reachable";
 
   return "failed";
@@ -142,7 +224,8 @@ module.exports = {
   RECEIVER_LISTEN_TIMEOUT_SEC,
   RETRY_DELAYS_MS,
   runEngineOnce,
-  runSenderWithRetries,
+  runSender,
+  startReceiverBridge,
   senderReportStatus,
   receiverReportStatus,
   reportOutcome,

@@ -30,6 +30,8 @@ flowchart TB
     A ==>|spawns| SenderProc["sender<br/>C++ engine"]
     B ==>|spawns| ReceiverProc["receiver<br/>C++ engine"]
     SenderProc <-->|"direct TCP + TLS 1.3, chunked,<br/>SHA-256 per chunk — file bytes<br/>never touch the backend"| ReceiverProc
+    SenderProc -.->|"fallback when not directly reachable:<br/>WebSocket bridge, still end-to-end TLS"| Relay["Relay<br/>blind byte pipe"]
+    Relay -.-> ReceiverProc
 ```
 
 This is a **control plane / data plane split**:
@@ -38,11 +40,22 @@ This is a **control plane / data plane split**:
   "does Bob want this file" — a REST API for everything except the live
   push notification, which goes over an authenticated per-user socket.io
   channel (`user:<id>` room).
-- **Data plane** (direct, client-to-client): once Bob accepts, his client
+- **Data plane** (client-to-client): once Bob accepts, his client
   spawns `receiver`, Alice's client spawns `sender`, and the two connect
   to each other directly over TLS. The backend is never in this path and
   never sees file contents — only a final self-reported "it worked" or
   "it failed" for the audit log.
+- **Relay fallback** (for machines on different networks): Alice's client
+  first checks whether Bob's advertised address answers (3 s). If not, or
+  if it turns out to be a different machine (the certificate pin doesn't
+  match), the two clients carry the engine's bytes over WebSockets through
+  `relay/` instead. The engines don't change: each talks to a local bridge
+  (`client-core/relayBridge.js`). The relay only forwards the engines' TLS
+  stream, so it sees ciphertext, and the sender's certificate pin means it
+  can't impersonate Bob either. Access is by short-lived tickets the
+  backend signs for the two parties of a live transfer; the relay checks
+  the signature and needs no database. The sender's report records which
+  path was used (`direct` or `relay`).
 
 ### Components
 
@@ -55,7 +68,8 @@ This is a **control plane / data plane split**:
 | `cli/` | `peerpayload` — commander-based, `login`/`send`/`status`/`history`. |
 | `packages/ui/` | Presentational React components (`Meter`, `StatTile`, `StatusBadge`, `ThemeToggle`) shared between `desktop/` and (originally) `frontend/`. |
 | `frontend/` | **Legacy.** A React dashboard from before the accounts/presence rework — still assumes the old no-auth, manual host/port/token model and does not speak the current backend's API. Not part of the working system; kept in the repo but not wired up. |
-| `render.yaml` | Render Blueprint — deploys `backend/` and its Postgres together from one file. |
+| `relay/` | Stateless WebSocket relay for transfers that can't connect directly. Pairs the two sides of a transfer by backend-signed ticket and forwards their bytes with flow control. Its own service, so relayed traffic never competes with the API. |
+| `render.yaml` | Render Blueprint — deploys `backend/` with its Postgres, and the relay as a separate service sharing a generated `RELAY_SECRET`. |
 
 ## Using it
 
@@ -220,6 +234,7 @@ node --test "tests/engine/*.test.js"
 |---|---|
 | `integrity.test.js` | Byte-identical output across empty/1-byte/chunk-boundary files, every chunk size 4 KiB–8 MiB, window sizes, TLS and plaintext, nested/unicode directories, multiple sources, and truncation of a stale longer destination file. |
 | `resume.test.js` | Link dropped mid-transfer (TLS and plaintext), receiver or sender process killed, repeated interruptions, partially finished directories, plus the cases that must restart from chunk 0 instead of resuming: changed file size, changed `--chunk-size`, deleted partial file, garbage or out-of-range `transfer.state`. |
+| `relay.test.js` | Engines through the real relay and client bridges: an unreachable address goes via the relay (pinned, byte-identical), a reachable one never touches it, a wrong machine at the advertised address switches to the relay, a relay link dropped mid-transfer resumes, and no path at all reports `not_reachable`. The relay's own tests (`relay/test/`) cover tickets, pairing, reconnects and flow control. |
 | `robustness.test.js` | Idle timeouts (a frozen link fails both sides with `peer_timeout`; a silent connection is dropped while the receiver keeps listening), the listen deadline, the receiver retry window (survives a dropped link or a corrupted chunk and the re-run resumes; retry budget runs out), and certificate pinning (stable fingerprint, wrong pin refused, invalid pins rejected). |
 | `failure-injection.test.js` | No receiver, wrong or missing token, TLS/plaintext mismatch, port scans and garbage bytes (receiver must keep listening), invalid input, injected chunk corruption (`DTS_CORRUPT_CHUNK`), bit flips on the wire via a fault proxy, and a hostile raw-protocol sender: bad handshake fields, path traversal, out-of-order/oversized/missing chunks, wrong hashes. |
 
@@ -249,12 +264,19 @@ Some deliberate, some just not built yet:
 
 - **No self-registration or SSO.** Accounts are admin-created only
   (`createAdmin.js` bootstraps the first one).
-- **No relay fallback.** If two machines can't reach each other directly
-  (NAT/firewall), the transfer just fails. The sender's report records it
-  as `not_reachable` (and an unanswered offer as `timed_out`), separate
-  from `failed`, so how often this happens is observable, but nothing
-  routes around it. Deliberately deferred until that data shows it's
-  needed.
+- **Relay, not hole punching.** Machines that can't reach each other
+  directly always go through the relay; there's no NAT traversal or
+  router port-mapping (UPnP/NAT-PMP) yet. Relayed transfers are slower and
+  cost relay bandwidth. Each sender report records `path`, so the share of
+  relayed traffic is measurable before deciding whether port-mapping is
+  worth building.
+- **Relay on Render's free tier** spins down when idle, so the first
+  relayed transfer after a quiet period waits for it to start, and its
+  bandwidth allowance is limited. For real use, move the relay to a
+  paid plan or a VPS and change `RELAY_URL`; nothing else changes.
+- **An unreachable receiver on an old client** (no relay bridge) makes
+  the sender wait for the relay pairing timeout (30 s) before reporting
+  `not_reachable`.
 - **The audit trail is client-self-reported, not tamper-proof.** Both
   sides report their own outcome after a transfer; the sender's report
   wins if they disagree. Fine for "did this generally work," not a
@@ -298,7 +320,8 @@ desktop/               Electron + React desktop app
 cli/                   peerpayload command-line client
 packages/ui/           shared presentational React components
 frontend/              legacy web dashboard — not wired to the current backend, see Known limitations
-render.yaml            Render Blueprint (backend + Postgres)
+relay/                 stateless WebSocket relay for transfers that can't connect directly
+render.yaml            Render Blueprint (backend + Postgres, relay)
 tools/                 benchmark harness, latency proxy, bench-log analysis
 docker-compose.yml     local Postgres + the old standalone backend/frontend pair (see frontend/ note)
 ```

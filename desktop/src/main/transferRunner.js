@@ -3,7 +3,8 @@ import path from "path";
 
 import {
   runEngineOnce,
-  runSenderWithRetries,
+  runSender,
+  startReceiverBridge,
   senderReportStatus,
   receiverReportStatus,
   reportOutcome,
@@ -123,30 +124,32 @@ export async function runSend({ filePath, toUsername, chunkSize }, onProgress) {
 
   onProgress({ phase: "sending", transferId: intent.id });
 
-  const args = [
-    "-h", accepted.receiverAddress,
-    "-p", String(accepted.receiverPort),
-    "--token", intent.engineToken,
-    "--transfer-id", intent.id,
-  ];
+  const baseArgs = ["--token", intent.engineToken, "--transfer-id", intent.id];
 
   if (chunkSize)
-    args.push("--chunk-size", String(chunkSize));
+    baseArgs.push("--chunk-size", String(chunkSize));
 
   // The fingerprint came from the backend over HTTPS, so pinning to it means
   // only the receiver that accepted this transfer can complete the TLS
-  // handshake. Absent only for an older receiving client.
+  // handshake — directly or through the relay. Absent only for an older
+  // receiving client.
   if (accepted.receiverCertFingerprint)
-    args.push("--pin-sha256", accepted.receiverCertFingerprint);
+    baseArgs.push("--pin-sha256", accepted.receiverCertFingerprint);
 
-  args.push(filePath);
+  baseArgs.push(filePath);
 
-  const outcome = await runSenderWithRetries({
+  // Direct when the receiver's address answers, relay otherwise.
+  const relay = accepted.relayAvailable ? { getTicket: () => api.getRelayTicket(intent.id) } : null;
+
+  const outcome = await runSender({
     exePath: config.senderPath,
-    args,
-    onEvent: (event, attempt) => onProgress({ phase: "sending", transferId: intent.id, attempt, event }),
-    onRetry: ({ attempt, reason, delayMs }) =>
-      onProgress({ phase: "retrying", transferId: intent.id, attempt, reason, delayMs }),
+    baseArgs,
+    target: { host: accepted.receiverAddress, port: accepted.receiverPort },
+    relay,
+    onPath: (path) => onProgress({ phase: "sending", transferId: intent.id, path }),
+    onEvent: (event, attempt, path) => onProgress({ phase: "sending", transferId: intent.id, attempt, path, event }),
+    onRetry: ({ attempt, reason, delayMs, path }) =>
+      onProgress({ phase: "retrying", transferId: intent.id, attempt, reason, delayMs, path }),
   });
 
   const { finalEvent } = outcome;
@@ -160,9 +163,11 @@ export async function runSend({ filePath, toUsername, chunkSize }, onProgress) {
     totalBytes,
     failReason: ok ? undefined : finalEvent.reason,
     elapsedMs: finalEvent.elapsedMs,
+    path: outcome.path,
+    attempts: outcome.attempts,
   });
 
-  onProgress({ phase: "done", transferId: intent.id, ok, finalEvent, attempts: outcome.attempts, reported });
+  onProgress({ phase: "done", transferId: intent.id, ok, finalEvent, attempts: outcome.attempts, path: outcome.path, reported });
 
   return { ok, transferId: intent.id };
 }
@@ -216,14 +221,31 @@ export async function runReceive({ transferId, outputDir }, onProgress) {
 
   const listeningEvent = await listening;
 
-  await api.acceptTransfer(transferId, {
-    host: getLocalIp(),
-    port,
-    certFingerprint: listeningEvent.certSha256,
-  });
-  onProgress({ phase: "accepted", transferId });
+  // Also wait for the sender on the relay, in case it can't reach this
+  // machine directly. The engine takes connections from either path.
+  const relayBridge = transfer.relayAvailable
+    ? startReceiverBridge({
+        getTicket: () => api.getRelayTicket(transferId),
+        enginePort: port,
+        log: (msg) => console.warn(msg),
+      })
+    : null;
 
-  const finalEvent = await finishedPromise;
+  let finalEvent;
+
+  try {
+    await api.acceptTransfer(transferId, {
+      host: getLocalIp(),
+      port,
+      certFingerprint: listeningEvent.certSha256,
+    });
+    onProgress({ phase: "accepted", transferId });
+
+    finalEvent = await finishedPromise;
+  } finally {
+    relayBridge?.stop();
+  }
+
   const ok = finalEvent.event === "transfer_complete";
 
   await reportOutcome(api, transferId, {

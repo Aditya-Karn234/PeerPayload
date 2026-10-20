@@ -408,10 +408,11 @@ export default function Dashboard({ user, onLogout }) {
             <p className="text-xs" style={{ color: "var(--color-ink-muted)" }}>
               {sendState.phase === "starting" && "Starting…"}
               {sendState.phase === "waiting-for-acceptance" && "Waiting for recipient to accept…"}
-              {sendState.phase === "sending" && "Sending…"}
+              {sendState.phase === "sending" && (sendState.path === "relay" ? "Sending via relay…" : "Sending…")}
               {sendState.phase === "retrying" &&
                 `Connection lost (${sendState.reason}) — resuming in ${Math.round(sendState.delayMs / 1000)}s (attempt ${sendState.attempt + 1})…`}
-              {sendState.phase === "done" && (sendState.ok ? "Complete." : `Failed: ${sendState.finalEvent?.reason}`)}
+              {sendState.phase === "done" &&
+                (sendState.ok ? (sendState.path === "relay" ? "Complete (via relay)." : "Complete.") : `Failed: ${sendState.finalEvent?.reason}`)}
             </p>
             {sendState.phase === "sending" && (
               <div className="mt-1 w-64">

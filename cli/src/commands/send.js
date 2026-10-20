@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { runSenderWithRetries, senderReportStatus, reportOutcome } = require("client-core/transferPolicy");
+const { runSender, senderReportStatus, reportOutcome } = require("client-core/transferPolicy");
 const { api, tokenStore } = require("../client");
 const config = require("../config");
 const { printJson } = require("../output");
@@ -63,8 +63,8 @@ async function waitForAcceptance(transferId) {
   throw Object.assign(new Error("timed out waiting for the recipient to respond"), { code: "timed_out" });
 }
 
-function senderArgs({ host, port, token, transferId, chunkSize, certFingerprint, filePath }) {
-  const args = ["-h", host, "-p", String(port), "--token", token, "--transfer-id", transferId];
+function senderArgs({ token, transferId, chunkSize, certFingerprint, filePath }) {
+  const args = ["--token", token, "--transfer-id", transferId];
 
   if (chunkSize)
     args.push("--chunk-size", String(chunkSize));
@@ -132,11 +132,16 @@ async function sendCommand(filePath, options) {
 
     let printedDots = false;
 
-    const outcome = await runSenderWithRetries({
+    const outcome = await runSender({
       exePath: config.senderPath,
-      args: senderArgs({
-        host: accepted.receiverAddress,
-        port: accepted.receiverPort,
+      target: { host: accepted.receiverAddress, port: accepted.receiverPort },
+      // Direct when the receiver's address answers, relay otherwise.
+      relay: accepted.relayAvailable ? { getTicket: () => api.getRelayTicket(intent.id) } : null,
+      onPath: (path) => {
+        if (!options.json && path === "relay")
+          console.log("Receiver isn't directly reachable; sending through the relay...");
+      },
+      baseArgs: senderArgs({
         token: intent.engineToken,
         transferId: intent.id,
         chunkSize: options.chunkSize,
@@ -174,12 +179,14 @@ async function sendCommand(filePath, options) {
       totalBytes,
       failReason: ok ? undefined : finalEvent.reason,
       elapsedMs: finalEvent.elapsedMs,
+      path: outcome.path,
+      attempts: outcome.attempts,
     });
 
     if (options.json) {
-      printJson({ ok, transferId: intent.id, attempts: outcome.attempts, reported, ...finalEvent });
+      printJson({ ok, transferId: intent.id, attempts: outcome.attempts, path: outcome.path, reported, ...finalEvent });
     } else if (ok) {
-      console.log(`Transfer complete (${finalEvent.elapsedMs}ms${outcome.attempts > 1 ? `, ${outcome.attempts} attempts` : ""}).`);
+      console.log(`Transfer complete (${finalEvent.elapsedMs}ms${outcome.path === "relay" ? ", via relay" : ""}${outcome.attempts > 1 ? `, ${outcome.attempts} attempts` : ""}).`);
     } else {
       console.error(`Transfer failed: ${finalEvent.reason}`);
     }

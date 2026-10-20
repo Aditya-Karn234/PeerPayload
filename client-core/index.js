@@ -3,4 +3,5 @@ module.exports = {
   ...require("./engine"),
   ...require("./tokenStore"),
   ...require("./transferPolicy"),
+  ...require("./relayBridge"),
 };

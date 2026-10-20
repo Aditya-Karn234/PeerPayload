@@ -1,0 +1,196 @@
+// Relay path end to end: real sender/receiver engines, the real relay
+// (relay/src/server.js) and the client-core bridges and path policy. No
+// backend — tickets are issued here with the relay's own helper.
+const { test, before, after } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("fs");
+const path = require("path");
+const h = require("./harness");
+const { createRelay } = require("../../relay/src/server");
+const { issueTicket } = require("../../relay/src/ticket");
+const { runSender, senderReportStatus, startReceiverBridge } = require("../../client-core/transferPolicy");
+
+const SECRET = "relay-test-secret".padEnd(40, "z");
+const CHUNK = 4096;
+let relay;
+let relayUrl;
+
+before(async () => {
+  h.assertBinariesExist();
+  relay = createRelay({ secret: SECRET, log: { warn() {} } });
+  const port = await relay.listen(0, "127.0.0.1");
+  relayUrl = `ws://127.0.0.1:${port}/v1/connect`;
+});
+
+after(() => relay.close());
+
+const ticketsFor = (transferId, role) => async () => ({ url: relayUrl, ticket: issueTicket({ transferId, role, ttlSec: 300 }, SECRET) });
+
+function setup(t) {
+  const srcDir = h.makeTempDir("src");
+  const outDir = h.makeTempDir("out");
+  t.after(() => {
+    fs.rmSync(srcDir, { recursive: true, force: true });
+    fs.rmSync(outDir, { recursive: true, force: true });
+  });
+  return { srcDir, outDir };
+}
+
+// Receiver engine (retry window on, like the apps) plus its relay bridge.
+async function startReceiverSide(t, outDir, transferId) {
+  const receiver = await h.startReceiver({ outDir, transferId, token: "tok", args: ["--max-retries", "3", "--listen-timeout", "60"] });
+  const bridge = startReceiverBridge({ getTicket: ticketsFor(transferId, "receiver"), enginePort: receiver.port });
+  t.after(() => {
+    bridge.stop();
+    receiver.kill();
+  });
+  const pin = receiver.ofType("listening")[0].certSha256;
+  return { receiver, bridge, pin };
+}
+
+const baseArgs = (transferId, pin, src) => ["--token", "tok", "--transfer-id", transferId, "--chunk-size", String(CHUNK), "--pin-sha256", pin, src];
+const noWait = () => Promise.resolve();
+
+test("relay: unreachable receiver address -> transfer goes through the relay, pinned and byte-identical", async (t) => {
+  const { srcDir, outDir } = setup(t);
+  const src = h.writeRandomFile(path.join(srcDir, "blob.bin"), 3 * 1024 * 1024 + 7, 21);
+  const { receiver, pin } = await startReceiverSide(t, outDir, "r1");
+  const deadPort = await h.freePort();
+  const paths = [];
+
+  const outcome = await runSender({
+    exePath: h.senderPath,
+    baseArgs: baseArgs("r1", pin, src),
+    target: { host: "127.0.0.1", port: deadPort },
+    relay: { getTicket: ticketsFor("r1", "sender") },
+    onPath: (p) => paths.push(p),
+    wait: noWait,
+  });
+
+  assert.equal(outcome.finalEvent.event, "transfer_complete", JSON.stringify(outcome.finalEvent));
+  assert.equal(outcome.path, "relay");
+  assert.deepEqual(paths, ["relay"]);
+  assert.equal(outcome.attempts, 1);
+  await h.withTimeout(receiver.exited, 10000, "receiver did not finish");
+  assert.equal(h.sha256File(path.join(outDir, "blob.bin")), h.sha256File(src));
+  assert.ok(relay.stats.bytes > 3 * 1024 * 1024, "bytes should have crossed the relay");
+});
+
+test("relay: a reachable receiver is used directly, never touching the relay", async (t) => {
+  const { srcDir, outDir } = setup(t);
+  const src = h.writeRandomFile(path.join(srcDir, "f.bin"), 500 * 1024, 22);
+  const { receiver, pin } = await startReceiverSide(t, outDir, "r2");
+  const before = relay.stats.bytes;
+
+  const outcome = await runSender({
+    exePath: h.senderPath,
+    baseArgs: baseArgs("r2", pin, src),
+    target: { host: "127.0.0.1", port: receiver.port },
+    relay: { getTicket: ticketsFor("r2", "sender") },
+    wait: noWait,
+  });
+
+  assert.equal(outcome.finalEvent.event, "transfer_complete");
+  assert.equal(outcome.path, "direct");
+  assert.equal(relay.stats.bytes, before, "no bytes may go through the relay on the direct path");
+  assert.equal(h.sha256File(path.join(outDir, "f.bin")), h.sha256File(src));
+});
+
+test("relay: the advertised address answers but is the wrong machine -> pin mismatch switches to the relay", async (t) => {
+  const { srcDir, outDir } = setup(t);
+  const src = h.writeRandomFile(path.join(srcDir, "f.bin"), 400 * 1024, 23);
+  const { receiver, pin } = await startReceiverSide(t, outDir, "r3");
+  // A different receiver (different certificate) squatting on the advertised address.
+  const decoyDir = h.makeTempDir("decoy");
+  const decoy = await h.startReceiver({ outDir: decoyDir, transferId: "decoy" });
+  t.after(() => {
+    decoy.kill();
+    fs.rmSync(decoyDir, { recursive: true, force: true });
+  });
+  const paths = [];
+
+  const outcome = await runSender({
+    exePath: h.senderPath,
+    baseArgs: baseArgs("r3", pin, src),
+    target: { host: "127.0.0.1", port: decoy.port },
+    relay: { getTicket: ticketsFor("r3", "sender") },
+    onPath: (p) => paths.push(p),
+    wait: noWait,
+  });
+
+  assert.equal(outcome.finalEvent.event, "transfer_complete", JSON.stringify(outcome.finalEvent));
+  assert.deepEqual(paths, ["direct", "relay"]);
+  assert.equal(decoy.ofType("session_start").length, 0, "nothing may be sent to the wrong machine");
+  assert.equal(fs.readdirSync(decoyDir).length, 0);
+  await h.withTimeout(receiver.exited, 10000, "receiver did not finish");
+  assert.equal(h.sha256File(path.join(outDir, "f.bin")), h.sha256File(src));
+});
+
+test("relay: the relay link drops mid-transfer -> the sender reconnects and resumes", async (t) => {
+  const { srcDir, outDir } = setup(t);
+  const size = 4 * 1024 * 1024;
+  const src = h.writeRandomFile(path.join(srcDir, "big.bin"), size, 24);
+  const { receiver, pin } = await startReceiverSide(t, outDir, "r4");
+  const deadPort = await h.freePort();
+
+  // Cut both relay sockets once ~1 MiB has been verified.
+  let cut = false;
+  const watcher = setInterval(() => {
+    if (!cut && receiver.ofType("chunk_verified").length > 256) {
+      cut = true;
+      const slot = relay.slots.get("r4");
+      slot?.sender?.terminate();
+      slot?.receiver?.terminate();
+    }
+  }, 20);
+  t.after(() => clearInterval(watcher));
+
+  const retries = [];
+  const outcome = await runSender({
+    exePath: h.senderPath,
+    baseArgs: baseArgs("r4", pin, src),
+    target: { host: "127.0.0.1", port: deadPort },
+    relay: { getTicket: ticketsFor("r4", "sender") },
+    onRetry: (r) => retries.push(r),
+    wait: noWait,
+  });
+
+  assert.ok(cut, "the relay link was never cut");
+  assert.equal(outcome.finalEvent.event, "transfer_complete", JSON.stringify(outcome.finalEvent));
+  assert.ok(outcome.attempts >= 2, `attempts ${outcome.attempts}`);
+  assert.equal(retries[0].path, "relay");
+  await receiver.waitFor("session_failed", 1000);
+  const resumes = receiver.ofType("file_start").map((e) => Number(e.resumeChunk));
+  assert.ok(resumes.length >= 2 && resumes[resumes.length - 1] > 0, `resume points ${resumes}`);
+  await h.withTimeout(receiver.exited, 10000, "receiver did not finish");
+  assert.equal(h.sha256File(path.join(outDir, "big.bin")), h.sha256File(src));
+});
+
+test("relay: no direct path and no working relay -> not_reachable", async (t) => {
+  const { srcDir } = setup(t);
+  const src = h.writeRandomFile(path.join(srcDir, "f.bin"), 10 * 1024, 25);
+  const deadPort = await h.freePort();
+
+  // Relay configured but the receiver never joins (and tickets are valid):
+  // the sender's bridge gives up pairing and the engine never connects.
+  const withRelay = await runSender({
+    exePath: h.senderPath,
+    baseArgs: ["--token", "tok", "--transfer-id", "r5", "--idle-timeout", "5", src],
+    target: { host: "127.0.0.1", port: deadPort },
+    relay: { getTicket: async () => { throw new Error("relay not configured"); } },
+    wait: noWait,
+  });
+  assert.equal(withRelay.connected, false);
+  assert.equal(senderReportStatus(withRelay), "not_reachable", JSON.stringify(withRelay.finalEvent));
+
+  // No relay at all: plain direct failure, also not_reachable.
+  const noRelay = await runSender({
+    exePath: h.senderPath,
+    baseArgs: ["--token", "tok", "--transfer-id", "r6", src],
+    target: { host: "127.0.0.1", port: deadPort },
+    wait: noWait,
+  });
+  assert.equal(noRelay.path, "direct");
+  assert.equal(noRelay.finalEvent.reason, "connection_failed");
+  assert.equal(senderReportStatus(noRelay), "not_reachable");
+});

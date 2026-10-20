@@ -97,6 +97,12 @@ function createApiClient({ baseUrl, tokenStore }) {
       return request(`/transfers/${id}/reject`, { method: "POST" });
     },
 
+    // { url, ticket, role, expiresAt }; throws (404) when the backend has
+    // no relay configured.
+    getRelayTicket(id) {
+      return request(`/transfers/${id}/relay-ticket`);
+    },
+
     postTransferReport(id, report) {
       return request(`/transfers/${id}/report`, { method: "POST", body: JSON.stringify(report) });
     },
