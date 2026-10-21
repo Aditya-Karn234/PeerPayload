@@ -64,11 +64,13 @@ function withToolchainPath(env) {
 
 const env = withToolchainPath({ ...process.env });
 
-function run(cmd, cwd, { shell = false } = {}) {
-  const res = spawnSync(cmd[0], cmd.slice(1), { cwd: path.join(root, cwd), env, stdio: "inherit", shell });
+// cmd: [file, ...args], or one command line (run through the shell).
+function run(cmd, cwd) {
+  const options = { cwd: path.join(root, cwd), env, stdio: "inherit" };
+  const res = typeof cmd === "string" ? spawnSync(cmd, { ...options, shell: true }) : spawnSync(cmd[0], cmd.slice(1), options);
 
   if (res.error)
-    console.error(`could not run ${cmd[0]}: ${res.error.message}`);
+    console.error(`could not run ${[].concat(cmd)[0]}: ${res.error.message}`);
 
   return res.status ?? 1;
 }
@@ -108,8 +110,9 @@ function installNodeDeps() {
 
     step(`npm ci (${pkg})`);
 
-    // npm is npm.cmd on Windows, which needs a shell.
-    if (run(["npm", "ci", "--no-audit", "--no-fund"], pkg, { shell: win }) !== 0)
+    // A command line, not [file, args]: npm is npm.cmd on Windows, which
+    // only runs through a shell.
+    if (run("npm ci --no-audit --no-fund", pkg) !== 0)
       return false;
   }
 
