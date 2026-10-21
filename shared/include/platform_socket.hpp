@@ -90,6 +90,34 @@ using platform_socklen_t = socklen_t;
 
 #endif
 
+// On POSIX, writing to a connection the peer has already closed raises
+// SIGPIPE, whose default action kills the whole process — no
+// transfer_failed event, no exit code worth reading, and in library use
+// (Android) the host app dies with it. Ignoring it turns that into an
+// ordinary EPIPE error that's reported and retried like any dropped link.
+// Process-wide, as networking code generally requires; Android's runtime
+// already ignores SIGPIPE in app processes. Idempotent; no-op on Windows.
+#ifndef _WIN32
+#include <csignal>
+#include <mutex>
+#endif
+
+inline void ignoreSigpipe()
+{
+#ifndef _WIN32
+    static std::once_flag once;
+
+    std::call_once(once, [] { std::signal(SIGPIPE, SIG_IGN); });
+#endif
+}
+
+// send() flag that suppresses SIGPIPE per call where the platform has it.
+#if defined(MSG_NOSIGNAL)
+constexpr int PLATFORM_SEND_FLAGS = MSG_NOSIGNAL;
+#else
+constexpr int PLATFORM_SEND_FLAGS = 0;
+#endif
+
 // True when a failed send()/recv() gave up because SO_SNDTIMEO/SO_RCVTIMEO
 // expired, as opposed to the peer closing or resetting the connection.
 inline bool isTimeoutError(int code)

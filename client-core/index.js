@@ -4,4 +4,5 @@ module.exports = {
   ...require("./tokenStore"),
   ...require("./transferPolicy"),
   ...require("./relayBridge"),
+  ...require("./deviceTicket"),
 };

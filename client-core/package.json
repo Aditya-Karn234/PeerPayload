@@ -10,7 +10,8 @@
     "./engine": "./engine.js",
     "./tokenStore": "./tokenStore.js",
     "./transferPolicy": "./transferPolicy.js",
-    "./relayBridge": "./relayBridge.js"
+    "./relayBridge": "./relayBridge.js",
+    "./deviceTicket": "./deviceTicket.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

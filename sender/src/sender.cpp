@@ -61,6 +61,10 @@ struct Options
     std::string token;
     int idleTimeoutSec = DEFAULT_IDLE_TIMEOUT_SEC;
     std::string pinSha256;
+    // This device's identity (ppkeygen), presented when the receiver
+    // requires one (receiver --peer-sha256). Empty: no client certificate.
+    std::string certPath;
+    std::string keyPath;
     std::vector<std::string> inputs;
 };
 
@@ -105,6 +109,8 @@ void printUsage()
         << "                           (default " << DEFAULT_IDLE_TIMEOUT_SEC << ", 0 = never)\n"
         << "      --pin-sha256 <hex>   require the receiver's certificate to have this\n"
         << "                           SHA-256 fingerprint (from its \"listening\" event)\n"
+        << "      --cert <file>        this device's certificate (from ppkeygen), shown\n"
+        << "      --key <file>         to receivers that only accept known devices\n"
         << "      --help               show this message\n"
         << "\n"
         << "Directories are sent recursively; the directory name is kept as\n"
@@ -349,6 +355,19 @@ bool parseArgs(int argc, char **argv, Options &options)
             continue;
         }
 
+        if (arg == "--cert" || arg == "--key")
+        {
+            if (++i >= argc)
+            {
+                std::cerr << "Missing value for " << arg << '\n';
+                return false;
+            }
+
+            (arg == "--cert" ? options.certPath : options.keyPath) = argv[i];
+
+            continue;
+        }
+
         if (arg == "--pin-sha256")
         {
             if (++i >= argc)
@@ -390,6 +409,18 @@ bool parseArgs(int argc, char **argv, Options &options)
     if (options.noTls && !options.pinSha256.empty())
     {
         std::cerr << "--pin-sha256 requires TLS; it can't be combined with --no-tls\n";
+        return false;
+    }
+
+    if (options.certPath.empty() != options.keyPath.empty())
+    {
+        std::cerr << "--cert and --key go together\n";
+        return false;
+    }
+
+    if (options.noTls && !options.certPath.empty())
+    {
+        std::cerr << "--cert/--key require TLS; they can't be combined with --no-tls\n";
         return false;
     }
 
@@ -531,11 +562,22 @@ bool collectFiles(
     return true;
 }
 
+// "[::1]" -> "::1": accept the bracketed IPv6 form people copy from URLs.
+std::string unbracketedHost(const std::string &host)
+{
+    if (host.size() >= 2 && host.front() == '[' && host.back() == ']')
+        return host.substr(1, host.size() - 2);
+
+    return host;
+}
+
 SOCKET connectToReceiver(const Options &options)
 {
     addrinfo hints{};
 
-    hints.ai_family = AF_INET;
+    // Any family: an IPv6-only network (common on mobile data) has no IPv4
+    // route at all. Addresses are tried in getaddrinfo's order.
+    hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 
@@ -545,7 +587,7 @@ SOCKET connectToReceiver(const Options &options)
 
     int rc =
         getaddrinfo(
-            options.host.c_str(),
+            unbracketedHost(options.host).c_str(),
             portText.c_str(),
             &hints,
             &results);
@@ -1118,6 +1160,9 @@ SendResult sendOneFile(
 // as well as from sender's own main(). Same flags, events and exit codes.
 int runSenderMain(int argc, char **argv)
 {
+    // A peer closing mid-write must be an error, not process death.
+    ignoreSigpipe();
+
     Options options;
 
     if (!parseArgs(argc, argv, options))
@@ -1181,7 +1226,7 @@ int runSenderMain(int argc, char **argv)
     {
         std::string tlsError;
 
-        tlsCtx = createClientTlsContext(tlsError);
+        tlsCtx = createClientTlsContext(tlsError, options.certPath, options.keyPath);
 
         if (!tlsCtx)
         {

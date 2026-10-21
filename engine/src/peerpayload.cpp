@@ -82,6 +82,11 @@ PP_API int pp_run_receiver(pp_run *run, int argc, const char *const *argv)
     return callEngine(run, runReceiverMain, "receiver", argc, argv);
 }
 
+PP_API int pp_run_keygen(pp_run *run, int argc, const char *const *argv)
+{
+    return callEngine(run, runKeygenMain, "ppkeygen", argc, argv);
+}
+
 PP_API void pp_run_cancel(pp_run *run)
 {
     if (run)

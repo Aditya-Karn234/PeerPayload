@@ -3,6 +3,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <string>
 #include <vector>
@@ -39,7 +40,28 @@ struct Options
     int idleTimeoutSec = DEFAULT_IDLE_TIMEOUT_SEC;
     int listenTimeoutSec = 0;
     int maxRetries = 0;
+    // This device's lasting identity (ppkeygen) instead of a throwaway
+    // per-run certificate, so senders can pin a stable fingerprint.
+    std::string certPath;
+    std::string keyPath;
+    // Mutual TLS: only senders presenting one of these certificate
+    // fingerprints get past the handshake. Empty: anyone (as before).
+    std::vector<std::string> allowedPeers;
 };
+
+bool isHexSha256(const std::string &text)
+{
+    if (text.size() != 64)
+        return false;
+
+    for (char c : text)
+    {
+        if (!std::isxdigit(static_cast<unsigned char>(c)))
+            return false;
+    }
+
+    return true;
+}
 
 struct FileOutcome
 {
@@ -74,6 +96,11 @@ void printUsage()
         << "                           dropped, peer timeout, corrupted chunk), keep\n"
         << "                           listening so the sender can reconnect and resume,\n"
         << "                           up to n times (default 0 = exit on first failure)\n"
+        << "      --cert <file>        this device's certificate (from ppkeygen) and\n"
+        << "      --key <file>         key, instead of a throwaway one per run\n"
+        << "      --peer-sha256 <hex>  only accept senders presenting a certificate with\n"
+        << "                           this fingerprint (mutual TLS); repeat for each\n"
+        << "                           allowed device\n"
         << "      --help               show this message\n"
         << "\n"
         << "Resume state lives in <dir>/transfer.state and is removed once a\n"
@@ -192,6 +219,43 @@ bool parseArgs(int argc, char **argv, Options &options)
             continue;
         }
 
+        if (arg == "--cert" || arg == "--key")
+        {
+            if (++i >= argc)
+            {
+                std::cerr << "Missing value for " << arg << '\n';
+                return false;
+            }
+
+            (arg == "--cert" ? options.certPath : options.keyPath) = argv[i];
+
+            continue;
+        }
+
+        if (arg == "--peer-sha256")
+        {
+            if (++i >= argc)
+            {
+                std::cerr << "Missing value for " << arg << '\n';
+                return false;
+            }
+
+            std::string fingerprint = argv[i];
+
+            if (!isHexSha256(fingerprint))
+            {
+                std::cerr << "Invalid --peer-sha256: expected 64 hex characters\n";
+                return false;
+            }
+
+            for (char &c : fingerprint)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+            options.allowedPeers.push_back(fingerprint);
+
+            continue;
+        }
+
         if (arg == "--idle-timeout" || arg == "--listen-timeout" || arg == "--max-retries")
         {
             if (++i >= argc)
@@ -240,6 +304,18 @@ bool parseArgs(int argc, char **argv, Options &options)
         return false;
     }
 
+    if (options.certPath.empty() != options.keyPath.empty())
+    {
+        std::cerr << "--cert and --key go together\n";
+        return false;
+    }
+
+    if (options.noTls && (!options.certPath.empty() || !options.allowedPeers.empty()))
+    {
+        std::cerr << "--cert/--key/--peer-sha256 require TLS; they can't be combined with --no-tls\n";
+        return false;
+    }
+
     return true;
 }
 
@@ -279,8 +355,82 @@ void emitConnectionRejected(const std::string &transferId, const std::string &re
         .emit();
 }
 
-SOCKET openListener(const std::string &transferId, int port)
+// Dual-stack listener: one IPv6 socket with IPV6_V6ONLY off accepts both
+// IPv6 and IPv4 (as IPv4-mapped addresses) on the same port. Mobile
+// networks are often IPv6-only, so this is what lets a phone reach the
+// receiver at all. Returns INVALID_SOCKET (without reporting) when IPv6
+// isn't available here, so the caller falls back to plain IPv4.
+SOCKET openDualStackListener(int port)
 {
+    SOCKET listener = socket(AF_INET6, SOCK_STREAM, 0);
+
+    if (listener == INVALID_SOCKET)
+        return INVALID_SOCKET;
+
+    int off = 0;
+    int reuse = 1;
+
+    setsockopt(listener, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char *>(&off), sizeof(off));
+    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&reuse), sizeof(reuse));
+
+    sockaddr_in6 address{};
+
+    address.sin6_family = AF_INET6;
+    address.sin6_port = htons(static_cast<u_short>(port));
+    address.sin6_addr = in6addr_any;
+
+    if (bind(listener, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == SOCKET_ERROR ||
+        listen(listener, SOMAXCONN) == SOCKET_ERROR)
+    {
+        closesocket(listener);
+        return INVALID_SOCKET;
+    }
+
+    return listener;
+}
+
+// "1.2.3.4" for IPv4 and IPv4-mapped peers (so events look the same as
+// before for IPv4 senders), the IPv6 address otherwise.
+std::string peerAddressText(const sockaddr_storage &peer)
+{
+    char text[INET6_ADDRSTRLEN] = {};
+
+    if (peer.ss_family == AF_INET6)
+    {
+        const auto *v6 = reinterpret_cast<const sockaddr_in6 *>(&peer);
+
+        if (IN6_IS_ADDR_V4MAPPED(&v6->sin6_addr))
+        {
+            in_addr v4{};
+
+            std::memcpy(&v4, &v6->sin6_addr.s6_addr[12], sizeof(v4));
+            inet_ntop(AF_INET, &v4, text, sizeof(text));
+        }
+        else
+        {
+            inet_ntop(AF_INET6, &v6->sin6_addr, text, sizeof(text));
+        }
+    }
+    else
+    {
+        inet_ntop(AF_INET, &reinterpret_cast<const sockaddr_in *>(&peer)->sin_addr, text, sizeof(text));
+    }
+
+    return text;
+}
+
+SOCKET openListener(const std::string &transferId, int port, bool &dualStack)
+{
+    dualStack = false;
+
+    SOCKET dual = openDualStackListener(port);
+
+    if (dual != INVALID_SOCKET)
+    {
+        dualStack = true;
+        return dual;
+    }
+
     SOCKET listener = socket(AF_INET, SOCK_STREAM, 0);
 
     if (listener == INVALID_SOCKET)
@@ -906,7 +1056,16 @@ SessionOutcome runSession(
         .field("tls", transport.ssl != nullptr);
 
     if (transport.ssl)
+    {
         sessionStartEvent.field("tlsSummary", tlsConnectionSummary(transport.ssl));
+
+        // Which device is sending, when it presented a certificate (mutual
+        // TLS): lets the app attribute the transfer to a contact.
+        std::string peer = peerCertificateSha256(transport.ssl);
+
+        if (!peer.empty())
+            sessionStartEvent.field("peerCertSha256", peer);
+    }
 
     sessionStartEvent.emit();
 
@@ -958,6 +1117,9 @@ SessionOutcome runSession(
 // as well as from receiver's own main(). Same flags, events and exit codes.
 int runReceiverMain(int argc, char **argv)
 {
+    // A peer closing mid-write must be an error, not process death.
+    ignoreSigpipe();
+
     Options options;
 
     if (!parseArgs(argc, argv, options))
@@ -986,7 +1148,7 @@ int runReceiverMain(int argc, char **argv)
     {
         std::string tlsError;
 
-        tlsCtx = createServerTlsContext(tlsError);
+        tlsCtx = createServerTlsContext(tlsError, options.certPath, options.keyPath);
 
         if (!tlsCtx)
         {
@@ -997,6 +1159,11 @@ int runReceiverMain(int argc, char **argv)
         }
 
         certSha256 = serverCertificateSha256(tlsCtx);
+
+        // Mutual TLS: a sender without a certificate fails the handshake;
+        // one with a certificate is checked against the allow-list below.
+        if (!options.allowedPeers.empty())
+            requirePeerCertificate(tlsCtx);
     }
 
     auto cleanup = [&](SOCKET listener) {
@@ -1009,7 +1176,8 @@ int runReceiverMain(int argc, char **argv)
         platformSocketCleanup();
     };
 
-    SOCKET listener = openListener(transferId, options.port);
+    bool dualStack = false;
+    SOCKET listener = openListener(transferId, options.port, dualStack);
 
     if (listener == INVALID_SOCKET)
     {
@@ -1021,7 +1189,8 @@ int runReceiverMain(int argc, char **argv)
 
     listeningEvent
         .field("transferId", transferId)
-        .field("port", options.port);
+        .field("port", options.port)
+        .field("ipv6", dualStack);
 
     if (tlsCtx)
         listeningEvent.field("certSha256", certSha256);
@@ -1078,7 +1247,7 @@ int runReceiverMain(int argc, char **argv)
                 break;
         }
 
-        sockaddr_in peer{};
+        sockaddr_storage peer{};
 
         platform_socklen_t peerLength = sizeof(peer);
 
@@ -1099,9 +1268,7 @@ int runReceiverMain(int argc, char **argv)
             return 1;
         }
 
-        char peerText[INET_ADDRSTRLEN] = {};
-
-        inet_ntop(AF_INET, &peer.sin_addr, peerText, sizeof(peerText));
+        std::string peerText = peerAddressText(peer);
 
         JsonEvent("connection_accepted")
             .field("transferId", transferId)
@@ -1135,6 +1302,23 @@ int runReceiverMain(int argc, char **argv)
                 clientGuard.release();
                 closesocket(client);
                 continue;
+            }
+
+            if (!options.allowedPeers.empty())
+            {
+                std::string presented = peerCertificateSha256(tlsConn);
+
+                if (std::find(options.allowedPeers.begin(), options.allowedPeers.end(), presented) == options.allowedPeers.end())
+                {
+                    // A device we haven't paired with. Peer-caused, so keep
+                    // listening for an allowed one.
+                    std::cerr << "Rejected sender: certificate " << presented << " is not an allowed peer\n";
+                    emitConnectionRejected(transferId, "tls_peer_not_allowed");
+                    closeTlsConnection(tlsConn);
+                    clientGuard.release();
+                    closesocket(client);
+                    continue;
+                }
             }
         }
 

@@ -9,6 +9,7 @@
 add_library(ppengine_obj OBJECT
     ${PROJECT_SOURCE_DIR}/sender/src/sender.cpp
     ${PROJECT_SOURCE_DIR}/receiver/src/receiver.cpp
+    src/keygen.cpp
     src/peerpayload.cpp
 )
 
@@ -37,6 +38,16 @@ if(WIN32)
     target_link_options(peerpayload PRIVATE -static)
 else()
     target_link_options(peerpayload PRIVATE -static-libgcc -static-libstdc++)
+endif()
+
+# Device identity tool for PeerPayload Connect (see engine/src/keygen.cpp).
+add_executable(ppkeygen tools/ppkeygen.cpp)
+target_link_libraries(ppkeygen PRIVATE ppengine Threads::Threads)
+
+if(WIN32)
+    target_link_options(ppkeygen PRIVATE -static)
+else()
+    target_link_options(ppkeygen PRIVATE -static-libgcc -static-libstdc++)
 endif()
 
 # In-process tests of the C API (concurrent runs, event routing, cancel).

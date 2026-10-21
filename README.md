@@ -56,6 +56,13 @@ This is a **control plane / data plane split**:
   backend signs for the two parties of a live transfer; the relay checks
   the signature and needs no database. The sender's report records which
   path was used (`direct` or `relay`).
+  The same relay also serves PeerPayload Connect, which has no backend:
+  there each device signs its own ticket with its device key
+  (`client-core/deviceTicket.js`), naming the device it wants to meet. The
+  relay checks the certificate matches the claimed device ID and the
+  signature is valid, and only pairs two devices that name each other.
+  Because anyone can make a key pair, the relay caps connections per IP
+  address.
 
 ### Components
 
@@ -155,6 +162,12 @@ config bakes in the production URL for a packaged install instead).
 - **Cross-platform.** The same source builds and runs natively on Windows
   and Linux; sender and receiver interoperate in either direction
   regardless of which platform each side is running on.
+- **IPv6 and IPv4.** The receiver listens dual-stack (one port, both
+  families; the `listening` event reports `ipv6`), and the sender accepts
+  IPv6 addresses (`::1` or `[::1]`) and hostnames of either family. Needed
+  for IPv6-only mobile networks. Addresses are tried one after another,
+  not raced, so a hostname whose first address silently drops packets
+  delays the next one by up to the 20 s connect limit.
 - **A hash mismatch aborts the session** rather than retrying the bad
   chunk in place. Once chunks are pipelined, chunks after a bad one may
   already be in flight or received by the time its failure is known, so a
@@ -163,6 +176,19 @@ config bakes in the production URL for a packaged install instead).
   code, and a real mismatch should be rare — TCP already checksums the
   byte stream, so this mostly catches logic bugs, not routine transit
   noise.
+
+### Device identities (PeerPayload Connect)
+
+`ppkeygen --out <dir> --name "Alice's laptop"` creates a device identity: an
+Ed25519 key (`device.key`, keep it private) and a self-signed certificate
+(`device.crt`) that never expires. Its SHA-256 fingerprint (`certSha256`) is
+the device's ID. Paired devices pin each other: the sender with
+`--pin-sha256 <receiver's ID>`, the receiver with `--peer-sha256 <sender's
+ID>`, both using `--cert`/`--key` for their own identity. That's mutual
+TLS with no certificate authority and no server vouching for anyone.
+`ppkeygen --show <dir>` prints an existing ID; it refuses to replace one
+without `--force`, because that changes the device ID. The Enterprise apps
+don't use any of this.
 
 ### Using the engine as a library
 
@@ -212,6 +238,8 @@ Both take `--help` for the full flag list. The ones worth knowing:
 | `--pin-sha256 <hex>` | sender | Refuse the receiver unless its certificate's SHA-256 matches (the `certSha256` from the receiver's `listening` event). Fails with `tls_pin_mismatch`. |
 | `--max-retries <n>` | receiver | After a network-type session failure, keep listening for the sender to reconnect and resume, up to `n` times (default 0: exit on the first failure). |
 | `--listen-timeout <sec>` | receiver | Exit with `listen_timeout` if no sender connects within this long; re-armed after each retryable failure (default 0 = wait forever). |
+| `--cert <file>` `--key <file>` | both | Use a lasting device identity from `ppkeygen` instead of a throwaway certificate. The receiver's fingerprint then stays the same across runs; the sender presents it to receivers that require one. |
+| `--peer-sha256 <hex>` | receiver | Mutual TLS: only accept senders presenting a certificate with this fingerprint (repeat for each allowed device). Others are refused (`tls_peer_not_allowed`) and the receiver keeps listening. `session_start` reports the sender's `peerCertSha256`. |
 
 ## Performance
 
@@ -258,7 +286,9 @@ node --test "tests/engine/*.test.js"
 |---|---|
 | `integrity.test.js` | Byte-identical output across empty/1-byte/chunk-boundary files, every chunk size 4 KiB–8 MiB, window sizes, TLS and plaintext, nested/unicode directories, multiple sources, and truncation of a stale longer destination file. |
 | `resume.test.js` | Link dropped mid-transfer (TLS and plaintext), receiver or sender process killed, repeated interruptions, partially finished directories, plus the cases that must restart from chunk 0 instead of resuming: changed file size, changed `--chunk-size`, deleted partial file, garbage or out-of-range `transfer.state`. |
-| `relay.test.js` | Engines through the real relay and client bridges: an unreachable address goes via the relay (pinned, byte-identical), a reachable one never touches it, a wrong machine at the advertised address switches to the relay, a relay link dropped mid-transfer resumes, and no path at all reports `not_reachable`. The relay's own tests (`relay/test/`) cover tickets, pairing, reconnects and flow control. |
+| `ipv6.test.js` | Dual-stack receiver: transfers to `::1` and `[::1]`, IPv4 senders shown as plain IPv4, hostnames resolving to both families, pinning over IPv6. Skipped on machines without IPv6 loopback. |
+| `identity.test.js` | `ppkeygen` (create, show, refuse to overwrite), stable receiver fingerprints with an identity, mutual TLS between paired devices (receiver learns the sender's ID), refusing senders with no certificate or an unknown one while staying up, several allowed devices, invalid flag combinations, and senders with an identity working against an Enterprise-style receiver. |
+| `relay.test.js` | Engines through the real relay and client bridges, including a Connect-style transfer (device identities, mutual TLS, device-signed tickets, no backend): an unreachable address goes via the relay (pinned, byte-identical), a reachable one never touches it, a wrong machine at the advertised address switches to the relay, a relay link dropped mid-transfer resumes, and no path at all reports `not_reachable`. The relay's own tests (`relay/test/`) cover tickets, pairing, reconnects and flow control. |
 | `robustness.test.js` | Idle timeouts (a frozen link fails both sides with `peer_timeout`; a silent connection is dropped while the receiver keeps listening), the listen deadline, the receiver retry window (survives a dropped link or a corrupted chunk and the re-run resumes; retry budget runs out), and certificate pinning (stable fingerprint, wrong pin refused, invalid pins rejected). |
 | `failure-injection.test.js` | No receiver, wrong or missing token, TLS/plaintext mismatch, port scans and garbage bytes (receiver must keep listening), invalid input, injected chunk corruption (`DTS_CORRUPT_CHUNK`), bit flips on the wire via a fault proxy, and a hostile raw-protocol sender: bad handshake fields, path traversal, out-of-order/oversized/missing chunks, wrong hashes. |
 

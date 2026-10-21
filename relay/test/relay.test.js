@@ -46,7 +46,7 @@ const paired = (ws) => until(() => ws.texts.some((t) => JSON.parse(t).type === "
 
 test("tickets: round trip, and tampered / expired / wrong-secret tickets are rejected", () => {
   const t = ticket("abc", "sender");
-  assert.deepEqual(verifyTicket(t, SECRET), { transferId: "abc", role: "sender" });
+  assert.deepEqual(verifyTicket(t, SECRET), { kind: "backend", transferId: "abc", role: "sender" });
   assert.equal(verifyTicket(t, "other-secret"), null);
   const [payload, sig] = t.split(".");
   const forged = Buffer.from(JSON.stringify({ t: "abc", r: "receiver", e: 9999999999 })).toString("base64url");

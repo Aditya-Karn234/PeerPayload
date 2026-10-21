@@ -25,7 +25,7 @@ inline bool sendAll(
                 sock,
                 data + total,
                 size - total,
-                0);
+                PLATFORM_SEND_FLAGS);
 
         if (sent <= 0)
         {

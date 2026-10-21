@@ -22,6 +22,12 @@
  * sending and receiving simultaneously); each reports only its own events.
  *
  * Diagnostics meant for humans still go to stderr.
+ *
+ * On Linux/Android the engine sets SIGPIPE to "ignore" for the process
+ * (once, on the first run). Otherwise a peer closing the connection while
+ * the engine is writing would kill the whole host process instead of
+ * ending the run with transfer_failed. Android's runtime already ignores
+ * SIGPIPE in app processes, so this changes nothing there.
  */
 
 #ifdef __cplusplus
@@ -50,6 +56,12 @@ PP_API pp_run *pp_run_new(pp_event_fn on_event, void *user_data);
 /* argv excludes the program name: { "-h", "10.0.0.5", "-p", "8080", "file" }. */
 PP_API int pp_run_sender(pp_run *run, int argc, const char *const *argv);
 PP_API int pp_run_receiver(pp_run *run, int argc, const char *const *argv);
+
+/* Device identity tool, same arguments as the ppkeygen program:
+ * { "--out", dir, "--name", "Alice's phone" } creates dir/device.crt and
+ * dir/device.key and reports identity_created with the certSha256 device
+ * ID; { "--show", dir } reports an existing one. */
+PP_API int pp_run_keygen(pp_run *run, int argc, const char *const *argv);
 
 /* Thread-safe; idempotent; harmless before the run starts or after it ends. */
 PP_API void pp_run_cancel(pp_run *run);

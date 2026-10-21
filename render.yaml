@@ -53,6 +53,10 @@ services:
     envVars:
       - key: RELAY_SECRET
         generateValue: true
+      # Render's proxy sets X-Forwarded-For; the per-IP connection cap
+      # needs the real client address, not the proxy's.
+      - key: TRUST_PROXY
+        value: "1"
 
 databases:
   - name: orgxfer-db
