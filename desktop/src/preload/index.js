@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 // Narrow, explicit surface — the renderer gets exactly these functions and
 // nothing else (no raw ipcRenderer, no Node APIs). contextIsolation +
@@ -30,7 +30,14 @@ contextBridge.exposeInMainWorld("peerpayload", {
   getAutoAccept: () => ipcRenderer.invoke("get-auto-accept"),
   setAutoAccept: (value) => ipcRenderer.invoke("set-auto-accept", value),
 
+  connectionStatus: () => ipcRenderer.invoke("connection-status"),
+  appInfo: () => ipcRenderer.invoke("app-info"),
+  openDownloads: () => ipcRenderer.invoke("open-downloads"),
+  // A dropped File's real path on disk (Electron removed File.path).
+  pathForFile: (file) => webUtils.getPathForFile(file),
+
   onProgress: (callback) => subscribe("transfer-progress", callback),
+  onConnection: (callback) => subscribe("connection", callback),
   onIncomingTransfer: (callback) => subscribe("incoming-transfer", callback),
   onSessionRevoked: (callback) => subscribe("session-revoked", callback),
 });

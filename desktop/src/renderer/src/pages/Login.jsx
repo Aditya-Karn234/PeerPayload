@@ -1,4 +1,8 @@
 import { useState } from "react";
+import { ArrowRight } from "lucide-react";
+import { Button, Field, SectionLabel, TextInput, Wordmark } from "@peerpayload/ui";
+
+import appIcon from "../../../../resources/icon.png";
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState("");
@@ -22,54 +26,33 @@ export default function Login({ onLogin }) {
   }
 
   return (
-    <div className="flex h-screen items-center justify-center">
-      <form
-        onSubmit={handleSubmit}
-        className="w-80 rounded-lg border p-6"
-        style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
-      >
-        <h1 className="text-base font-semibold">PeerPayload Enterprise</h1>
-        <p className="mt-1 text-xs" style={{ color: "var(--color-ink-muted)" }}>
-          Sign in with your org account.
-        </p>
+    <div className="grid min-h-screen grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+      <div className="flex flex-col justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-10 py-10 md:border-b-0 md:border-r">
+        <Wordmark size={34} edition="Enterprise" markSrc={appIcon} />
+        <div className="mt-16">
+          <p className="max-w-sm text-[28px] font-bold leading-tight tracking-tight">Send files to colleagues, directly.</p>
+          <p className="mt-4 font-mono text-xs uppercase tracking-[0.16em] text-[var(--color-ink-muted)]">Direct / Private / Reliable</p>
+        </div>
+      </div>
 
-        <label className="mt-4 block text-sm">
-          <span className="mb-1 block" style={{ color: "var(--color-ink-secondary)" }}>Username</span>
-          <input
-            autoFocus
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            className="w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none"
-            style={{ borderColor: "var(--color-border)" }}
-            required
-          />
-        </label>
+      <div className="flex items-center px-10 py-10">
+        <form onSubmit={handleSubmit} className="w-full max-w-sm">
+          <SectionLabel>Sign in</SectionLabel>
+          <h1 className="mt-4 text-2xl font-bold tracking-tight">PeerPayload Enterprise</h1>
+          <p className="mt-2 text-sm text-[var(--color-ink-secondary)]">Sign in with your organisation account.</p>
 
-        <label className="mt-3 block text-sm">
-          <span className="mb-1 block" style={{ color: "var(--color-ink-secondary)" }}>Password</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none"
-            style={{ borderColor: "var(--color-border)" }}
-            required
-          />
-        </label>
+          <Field label="Username" className="mt-6">
+            <TextInput autoFocus value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required />
+          </Field>
+          <Field label="Password" error={error} className="mt-4">
+            <TextInput type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
+          </Field>
 
-        {error && (
-          <p className="mt-3 text-sm" style={{ color: "var(--color-critical)" }}>{error}</p>
-        )}
-
-        <button
-          type="submit"
-          disabled={submitting}
-          className="mt-4 w-full rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-          style={{ background: "var(--color-accent)" }}
-        >
-          {submitting ? "Signing in…" : "Sign in"}
-        </button>
-      </form>
+          <Button type="submit" variant="primary" iconAfter={ArrowRight} className="mt-6 w-full" disabled={submitting}>
+            {submitting ? "Signing in…" : "Sign in"}
+          </Button>
+        </form>
+      </div>
     </div>
   );
 }

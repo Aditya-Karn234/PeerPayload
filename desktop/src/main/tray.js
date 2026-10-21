@@ -1,15 +1,15 @@
+import path from "path";
 import { Tray, Menu, nativeImage } from "electron";
 
 let tray = null;
 
-// A 16x16 solid-color dot as a base64 PNG — placeholder for a real icon
-// asset. Good enough to prove tray/background behavior works; swap for a
-// designed icon before shipping.
-const ICON_DATA_URL =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAI0lEQVR42mNkYPhfz0AEYBxVSF5BVCF5BVGF5BVEFTIwAAD+VAn+2GdWNAAAAABJRU5ErkJggg==";
+// The raven app tile (resources/tray.png; Electron picks tray@2x.png on
+// high-DPI screens). From out/main in development and inside the packaged
+// app alike.
+const trayIcon = () => nativeImage.createFromPath(path.join(__dirname, "../../resources/tray.png"));
 
 export function createTray({ onOpen, onQuit, onToggleAutoAccept, getAutoAccept }) {
-  tray = new Tray(nativeImage.createFromDataURL(ICON_DATA_URL));
+  tray = new Tray(trayIcon());
 
   tray.setToolTip("PeerPayload Enterprise");
 

@@ -69,6 +69,26 @@ const STATUS = {
       </>
     ),
   },
+  paused: {
+    label: "Paused",
+    color: "var(--color-ink-secondary)",
+    icon: <path d="M5.5 4v8M10.5 4v8" fill="none" strokeWidth="2" strokeLinecap="round" />,
+  },
+  interrupted: {
+    label: "Interrupted",
+    color: "var(--color-warning)",
+    icon: <path d="M5.5 4v8M10.5 4v8" fill="none" strokeWidth="2" strokeLinecap="round" />,
+  },
+  declined: {
+    label: "Declined",
+    color: "var(--color-serious)",
+    icon: (
+      <>
+        <circle cx="8" cy="8" r="5.5" fill="none" strokeWidth="2" />
+        <path d="M5.5 5.5l5 5M10.5 5.5l-5 5" strokeWidth="2" strokeLinecap="round" />
+      </>
+    ),
+  },
   timed_out: {
     label: "Timed out",
     color: "var(--color-warning)",
@@ -86,10 +106,10 @@ export default function StatusBadge({ status }) {
 
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium"
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-[var(--radius-md,9999px)] border px-2 py-0.5 text-xs font-medium"
       style={{ color: spec.color, borderColor: "var(--color-border)" }}
     >
-      <svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" fill="currentColor">
+      <svg width="14" height="14" viewBox="0 0 16 16" stroke="currentColor" fill="currentColor" aria-hidden="true">
         {spec.icon}
       </svg>
       {spec.label}
