@@ -3,6 +3,7 @@ import { ArrowRight } from "lucide-react";
 import { Button, Field, SectionLabel, TextInput, Wordmark } from "@peerpayload/ui";
 
 import { errorMessage } from "../lib/util";
+import appIcon from "../../../../resources/icon.png";
 
 // First run: create this device's identity. No account, no server: the
 // key is made here and never leaves this machine.
@@ -28,7 +29,7 @@ export default function Setup({ onDone }) {
   return (
     <div className="grid min-h-screen grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
       <div className="flex flex-col justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-10 py-10 md:border-b-0 md:border-r">
-        <Wordmark size={34} edition="Connect" />
+        <Wordmark size={34} edition="Connect" markSrc={appIcon} />
         <div className="mt-16">
           <p className="max-w-sm text-[28px] font-bold leading-tight tracking-tight">Send files straight to people you know.</p>
           <p className="mt-4 font-mono text-xs uppercase tracking-[0.16em] text-[var(--color-ink-muted)]">Direct / Private / Reliable</p>

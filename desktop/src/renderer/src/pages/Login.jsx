@@ -2,6 +2,8 @@ import { useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { Button, Field, SectionLabel, TextInput, Wordmark } from "@peerpayload/ui";
 
+import appIcon from "../../../../resources/icon.png";
+
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -26,7 +28,7 @@ export default function Login({ onLogin }) {
   return (
     <div className="grid min-h-screen grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
       <div className="flex flex-col justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-10 py-10 md:border-b-0 md:border-r">
-        <Wordmark size={34} edition="Enterprise" />
+        <Wordmark size={34} edition="Enterprise" markSrc={appIcon} />
         <div className="mt-16">
           <p className="max-w-sm text-[28px] font-bold leading-tight tracking-tight">Send files to colleagues, directly.</p>
           <p className="mt-4 font-mono text-xs uppercase tracking-[0.16em] text-[var(--color-ink-muted)]">Direct / Private / Reliable</p>

@@ -2,11 +2,11 @@ import { Wordmark } from "./Brand";
 
 // The app's left column: wordmark + edition, navigation, and a footer the
 // app fills with its own (real) status. pages: [{ id, label, icon, badge }]
-export default function SidebarNav({ edition, pages, current, onNavigate, footer }) {
+export default function SidebarNav({ edition, markSrc, pages, current, onNavigate, footer }) {
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="px-5 pb-6 pt-5">
-        <Wordmark size={26} edition={edition} />
+        <Wordmark size={26} edition={edition} markSrc={markSrc} />
       </div>
 
       <nav aria-label="Sections" className="flex flex-col gap-0.5 px-3">

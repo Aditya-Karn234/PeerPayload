@@ -1,6 +1,8 @@
 import { ArrowUpFromLine, Clock3, MonitorSmartphone, Settings } from "lucide-react";
 import { SidebarNav, StatusLine } from "@peerpayload/ui";
 
+import appIcon from "../../../../resources/icon.png";
+
 export const PAGES = [
   { id: "transfer", label: "Transfer", icon: ArrowUpFromLine },
   { id: "devices", label: "Devices", icon: MonitorSmartphone },
@@ -24,6 +26,7 @@ export default function Sidebar({ page, onNavigate, status, badges = {} }) {
   return (
     <SidebarNav
       edition="Connect"
+      markSrc={appIcon}
       pages={PAGES.map((p) => ({ ...p, badge: badges[p.id] }))}
       current={page}
       onNavigate={onNavigate}

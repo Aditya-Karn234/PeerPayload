@@ -18,10 +18,16 @@ export function RavenMark({ size = 24, title = "PeerPayload", accent = "var(--co
 
 // Mark + "PeerPayload" ("Payload" in the accent), optionally with the
 // edition ("Connect", "Enterprise") as a small mono label underneath.
-export function Wordmark({ size = 24, edition, className = "" }) {
+// markSrc: the edition's own app icon image instead of the raven mark, so
+// the window matches the launcher icon.
+export function Wordmark({ size = 24, edition, markSrc, className = "" }) {
   return (
-    <span className={`inline-flex items-center gap-2 ${className}`}>
-      <RavenMark size={size} title="" aria-hidden="true" />
+    <span className={`inline-flex items-center gap-2.5 ${className}`}>
+      {markSrc ? (
+        <img src={markSrc} alt="" width={size + 6} height={size + 6} className="shrink-0" aria-hidden="true" />
+      ) : (
+        <RavenMark size={size} title="" aria-hidden="true" />
+      )}
       <span className="flex flex-col leading-none">
         <span className="font-bold tracking-tight" style={{ fontSize: size * 0.62 }}>
           Peer<span style={{ color: "var(--color-accent)" }}>Payload</span>

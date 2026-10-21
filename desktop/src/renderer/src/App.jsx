@@ -8,6 +8,7 @@ import HistoryPage from "./pages/HistoryPage.jsx";
 import SettingsPage from "./pages/SettingsPage.jsx";
 import OfferBanner from "./components/OfferBanner.jsx";
 import useDashboard from "./lib/useDashboard";
+import appIcon from "../../../resources/icon.png";
 
 const PAGES = [
   { id: "transfer", label: "Transfer", icon: ArrowUpFromLine },
@@ -52,6 +53,7 @@ function SignedIn({ user, onLogout }) {
     <div className="flex h-screen overflow-hidden">
       <SidebarNav
         edition="Enterprise"
+        markSrc={appIcon}
         pages={PAGES.map((p) => ({ ...p, badge: p.id === "transfer" ? waiting : 0 }))}
         current={page}
         onNavigate={setPage}
