@@ -141,6 +141,7 @@ test("connect: falls back to the relay when the receiver isn't directly reachabl
   assert.equal(sent.state, "complete", sent.error);
   assert.equal(sent.path, "relay");
   assert.equal(received.state, "complete", received.error);
+  assert.equal(received.path, "relay", "the receiver knows it came via the relay too");
   assert.equal(sha(path.join(out, "big.bin")), sha(file));
   assert.ok(relay.stats.pairs >= 1);
 });

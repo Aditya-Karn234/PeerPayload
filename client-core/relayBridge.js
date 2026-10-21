@@ -156,7 +156,9 @@ async function startSenderBridge({ getTicket, log = () => {} }) {
 // pairs, connects to the local receiver engine and splices; when that
 // session ends (done, or a dropped link the sender will retry), waits again.
 // Runs until stop(), which the caller does when the receiver engine exits.
-function startReceiverBridge({ getTicket, enginePort, log = () => {} }) {
+// onPaired, if given, is called each time a sender arrives through the
+// relay (so the app can tell the transfer didn't go direct).
+function startReceiverBridge({ getTicket, enginePort, log = () => {}, onPaired = () => {} }) {
   let stopped = false;
   let current = null;
 
@@ -183,6 +185,7 @@ function startReceiverBridge({ getTicket, enginePort, log = () => {} }) {
             return;
 
           ws.off("message", onFirst);
+          onPaired();
           // Hold the sender's bytes until the local engine connection is up.
           ws.pause();
 

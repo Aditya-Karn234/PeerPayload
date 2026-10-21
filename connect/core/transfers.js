@@ -508,7 +508,12 @@ function createTransferManager({
       const relay = relayFor(transferId, "receiver", t.peer);
 
       if (relay)
-        bridge = startReceiverBridge({ getTicket: relay.getTicket, enginePort: port });
+        bridge = startReceiverBridge({
+          getTicket: relay.getTicket,
+          enginePort: port,
+          // The sender couldn't reach this device directly (see TransferRow's hint).
+          onPaired: () => t.path !== "relay" && update(t, { path: "relay" }),
+        });
 
       await sendTo(t.peer, "accept", { transferId, token, port, addresses: localAddresses(), relay: Boolean(relay) });
       finalEvent = await finished;

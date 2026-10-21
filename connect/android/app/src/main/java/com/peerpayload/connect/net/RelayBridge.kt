@@ -41,7 +41,7 @@ private fun isPaired(text: String) = runCatching { org.json.JSONObject(text).opt
  * OkHttp's reader thread are the back-pressure for relay -> engine; for
  * engine -> relay, reading stops while the send queue is above HIGH_WATER.
  */
-private class Splice(private val tcpProvider: () -> Socket) : WebSocketListener() {
+private class Splice(private val onPaired: () -> Unit = {}, private val tcpProvider: () -> Socket) : WebSocketListener() {
     val paired = CountDownLatch(1)
     val closed = CountDownLatch(1)
 
@@ -50,6 +50,8 @@ private class Splice(private val tcpProvider: () -> Socket) : WebSocketListener(
 
     override fun onMessage(webSocket: WebSocket, text: String) {
         if (tcp == null && isPaired(text)) {
+            onPaired()
+
             try {
                 val socket = tcpProvider()
 
@@ -180,6 +182,8 @@ class ReceiverBridge(
     private val enginePort: Int,
     private val getAccess: () -> RelayAccess,
     private val log: (String) -> Unit = {},
+    /** Called each time a sender arrives through the relay (it couldn't reach us directly). */
+    private val onPaired: () -> Unit = {},
 ) : AutoCloseable {
     @Volatile private var stopped = false
     @Volatile private var current: Pair<WebSocket, Splice>? = null
@@ -189,7 +193,7 @@ class ReceiverBridge(
             var backoff = 1000L
 
             while (!stopped) {
-                val splice = Splice { Socket().apply { connect(InetSocketAddress(InetAddress.getLoopbackAddress(), enginePort), 5000) } }
+                val splice = Splice(onPaired) { Socket().apply { connect(InetSocketAddress(InetAddress.getLoopbackAddress(), enginePort), 5000) } }
 
                 try {
                     val ws = http.newWebSocket(relayRequest(getAccess()), splice)

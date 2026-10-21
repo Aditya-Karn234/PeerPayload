@@ -50,6 +50,23 @@ function detail(t, rate) {
   }
 }
 
+// Why a transfer went through the relay, and what would make it direct.
+// The relay works anywhere but is limited by the slower side's internet
+// upload; direct is as fast as the network between the two devices.
+const onWindows = typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent);
+
+function relayHint(t) {
+  if (t.path !== "relay" || !["sending", "receiving", "complete"].includes(t.state))
+    return null;
+
+  if (t.direction === "out")
+    return `Went via the relay: ${t.peerName} couldn't be reached directly (its firewall or network blocks incoming connections).`;
+
+  return onWindows
+    ? `Came via the relay: ${t.peerName} couldn't connect to this PC directly. If you trust this network, allow “receiver” (PeerPayload Connect) in Windows Security › Firewall & network protection › Allow an app through firewall, for faster transfers.`
+    : `Came via the relay: ${t.peerName} couldn't connect to this computer directly. Allowing incoming connections for PeerPayload Connect in your firewall makes transfers faster.`;
+}
+
 // Paused on purpose (by either side) vs cut off (app closed, crash).
 const badgeFor = (t) => (t.state === "interrupted" && /^paused/.test(t.error ?? "") ? "paused" : BADGE[t.state] ?? "pending");
 
@@ -115,6 +132,11 @@ export default function TransferRow({ transfer: t, rate }) {
         {error && (
           <p className="mt-1 text-xs text-[var(--color-critical)]" role="alert">
             {error}
+          </p>
+        )}
+        {relayHint(t) && (
+          <p className="mt-1 text-xs text-[var(--color-ink-muted)]" data-testid="relay-hint">
+            {relayHint(t)}
           </p>
         )}
       </div>

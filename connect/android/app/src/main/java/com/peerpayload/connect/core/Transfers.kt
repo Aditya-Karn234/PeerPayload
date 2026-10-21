@@ -506,7 +506,12 @@ class Transfers(
                 val relay = relayAccess(id, "receiver", t.peer)
 
                 if (relay != null)
-                    bridge = withContext(Dispatchers.IO) { ReceiverBridge(http, port, relay, log) }
+                    bridge = withContext(Dispatchers.IO) {
+                        // The sender couldn't reach this phone directly (the UI explains why).
+                        ReceiverBridge(http, port, relay, log) {
+                            if (get(id)?.path != "relay") update(id) { it.copy(path = "relay") }
+                        }
+                    }
 
                 sendMessage(t.peer, Message.Accept(id, token, port, localAddresses(), relay != null))
                 engine.await()

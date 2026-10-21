@@ -392,6 +392,15 @@ private fun TransferCard(x: Transfer, rate: Rate?, vm: ConnectViewModel) {
 
         x.retry?.let { Text(it, fontSize = 12.sp, color = t.warning) }
 
+        // Via the relay: works anywhere, but only as fast as the slower
+        // side's upload. Say why, and what makes it direct.
+        if (x.path == "relay" && x.state in setOf("sending", "receiving", "complete"))
+            Text(
+                if (incoming) "Came via the relay: ${x.peerName} couldn't connect to this phone directly. Mobile data and public Wi-Fi block that; on the same Wi-Fi or this phone's hotspot it goes direct and faster."
+                else "Went via the relay: ${x.peerName} couldn't be reached directly (its firewall or network blocks incoming connections).",
+                fontSize = 12.sp, color = t.inkMuted,
+            )
+
         if (x.error != null && x.state != "complete")
             Text(x.error, fontSize = 13.sp, color = if (x.state == "interrupted") t.inkSecondary else t.critical)
 
