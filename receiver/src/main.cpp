@@ -952,6 +952,9 @@ SessionOutcome runSession(
 
 int main(int argc, char **argv)
 {
+    // A peer closing mid-write must be an error, not process death.
+    ignoreSigpipe();
+
     Options options;
 
     if (!parseArgs(argc, argv, options))
