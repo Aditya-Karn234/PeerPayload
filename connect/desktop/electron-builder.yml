@@ -24,6 +24,9 @@ extraResources:
     to: engine/ppkeygen.exe
 
 win:
+  # Prebuilt multi-size .ico (16-256 px), so the build doesn't have to
+  # convert icon.png (electron-builder's converter ran out of memory).
+  icon: resources/icon.ico
   target:
     - target: nsis
       arch: [x64]
