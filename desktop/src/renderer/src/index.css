@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Tailwind only generates classes it finds in scanned files, and the shared
+   components live outside this app's folder: scan them too, or their
+   classes (the progress Meter's h-2/h-full, ...) silently don't exist. */
+@source "../../../../packages/ui/src";
+
 /*
   Same palette as the web dashboard (frontend/src/index.css) — kept
   identical so the desktop app and the web app read as the same product.
