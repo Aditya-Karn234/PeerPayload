@@ -4,7 +4,9 @@ const crypto = require("crypto");
 const WebSocket = require("ws");
 
 const { createRelay } = require("../src/server");
-const { issueTicket, verifyTicket } = require("../src/ticket");
+const { issueBackendTicket, verifyTicket } = require("peerpayload-protocol");
+
+const issueTicket = (...args) => issueBackendTicket(...args).ticket;
 
 const SECRET = "test-secret-".padEnd(40, "x");
 let relay;

@@ -1,20 +1,12 @@
-const crypto = require("crypto");
 const WebSocket = require("ws");
+
+const { issueInboxToken } = require("peerpayload-protocol");
 
 const { open } = require("./envelope");
 
 // Talks to a Connect mailbox (connect/mailbox): sends envelopes, and keeps
 // an inbox connection that verifies + decrypts what arrives, hands it to
 // the app, then acknowledges it so the mailbox can delete it.
-
-// Proves to the mailbox that we hold this device's key, so it lets us
-// collect this device's inbox. Must match connect/mailbox/src/verify.js.
-function issueInboxToken(identity, { ttlSec = 600, now = Date.now() } = {}) {
-  const payload = { v: 1, purpose: "inbox", f: identity.fingerprint, e: Math.floor(now / 1000) + ttlSec, c: identity.certDer.toString("base64") };
-  const payloadPart = Buffer.from(JSON.stringify(payload)).toString("base64url");
-
-  return `${payloadPart}.${crypto.sign(null, Buffer.from(payloadPart), identity.signingKey).toString("base64url")}`;
-}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

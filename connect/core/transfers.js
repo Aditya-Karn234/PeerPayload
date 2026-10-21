@@ -12,18 +12,17 @@ const {
   RECEIVER_LISTEN_TIMEOUT_SEC,
 } = require("client-core/transferPolicy");
 const { probeTcp } = require("client-core/relayBridge");
-const { issueDeviceTicket } = require("client-core/deviceTicket");
+const { issueDeviceTicket, makeMessage, parseMessage, MAX_OFFER_NAMES } = require("peerpayload-protocol");
 
 const { seal } = require("./envelope");
 
 // Connect file transfers between paired devices. The negotiation travels
-// as envelopes through the mailbox:
+// as envelopes through the mailbox (message formats: protocol/messages.js):
 //
-//   sender   -> offer   { transferId, files: [{ name, size }], fileCount, totalBytes }
-//   receiver -> accept  { transferId, token, port, addresses: [host, ...], relay }
-//            |  decline { transferId }
-//   sender   -> cancel  { transferId }    (gave up: before the receiver answered,
-//                                         or after the transfer itself failed)
+//   sender   -> offer
+//   receiver -> accept (where to connect, engine token) | decline
+//   sender   -> cancel (gave up: before the receiver answered, or after
+//                       the transfer itself failed)
 //
 // The bytes then go engine to engine, mutually authenticated with the two
 // device certificates: the sender pins the receiver's device ID, and the
@@ -33,8 +32,6 @@ const { seal } = require("./envelope");
 
 // How long a sender waits for the other device to answer an offer.
 const OFFER_TIMEOUT_MS = 10 * 60 * 1000;
-
-const MAX_OFFER_NAMES = 50;
 
 function summarize(paths) {
   const files = [];
@@ -129,8 +126,6 @@ function progressTracker(total) {
   };
 }
 
-const isTransferId = (id) => typeof id === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(id);
-
 // identity     loadIdentity() result
 // contacts     openContacts() store; only paired contacts can offer/accept
 // sendEnvelope (envelope) => Promise — usually mailboxClient.send
@@ -149,8 +144,8 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
     onUpdate(snapshot(t));
   }
 
-  function sendTo(fp, payload) {
-    return sendEnvelope(seal({ identity, recipient: contacts.card(fp), payload }));
+  function sendTo(fp, type, fields) {
+    return sendEnvelope(seal({ identity, recipient: contacts.card(fp), payload: makeMessage(type, fields) }));
   }
 
   const relayFor = (transferId, role, peerFingerprint) =>
@@ -194,14 +189,14 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
         waiters.set(transferId, { resolve, reject, timer });
       });
 
-      await sendTo(peerFingerprint, { type: "offer", transferId, ...summary });
+      await sendTo(peerFingerprint, "offer", { transferId, ...summary });
       answer = await answered;
     } catch (err) {
       waiters.get(transferId) && clearTimeout(waiters.get(transferId).timer);
       waiters.delete(transferId);
 
       if (err.code === "timed_out")
-        sendTo(peerFingerprint, { type: "cancel", transferId }).catch(() => {});
+        sendTo(peerFingerprint, "cancel", { transferId }).catch(() => {});
 
       update(t, { state: err.code === "timed_out" ? "timed_out" : err.code === "cancelled" ? "cancelled" : "failed", error: err.message });
       return snapshot(t);
@@ -244,7 +239,7 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
 
     // The receiver would otherwise keep listening until its own timeout.
     if (!ok)
-      sendTo(peerFingerprint, { type: "cancel", transferId }).catch(() => {});
+      sendTo(peerFingerprint, "cancel", { transferId }).catch(() => {});
 
     update(t, { state: ok ? "complete" : "failed", error: ok ? undefined : outcome.error ?? outcome.finalEvent.reason, path: outcome.path });
 
@@ -301,7 +296,7 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
       if (relay)
         bridge = startReceiverBridge({ getTicket: relay.getTicket, enginePort: port });
 
-      await sendTo(t.peer, { type: "accept", transferId, token, port, addresses: localAddresses(), relay: Boolean(relay) });
+      await sendTo(t.peer, "accept", { transferId, token, port, addresses: localAddresses(), relay: Boolean(relay) });
       finalEvent = await finished;
     } catch (err) {
       receivers.get(transferId)?.kill();
@@ -326,7 +321,7 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
       throw new Error("no such pending offer");
 
     update(t, { state: "declined" });
-    await sendTo(t.peer, { type: "decline", transferId });
+    await sendTo(t.peer, "decline", { transferId });
   }
 
   // Feed every opened envelope here. Returns true if it was a transfer
@@ -335,26 +330,27 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
     if (!["offer", "accept", "decline", "cancel"].includes(payload?.type))
       return false;
 
+    const message = parseMessage(payload);
     const contact = contacts.get(from);
 
-    if (!contact || contact.status !== "paired" || !isTransferId(payload.transferId))
+    if (!message || !contact || contact.status !== "paired")
       return true;
 
-    const t = transfers.get(payload.transferId);
+    const t = transfers.get(message.transferId);
 
-    switch (payload.type) {
+    switch (message.type) {
       case "offer": {
         if (t)
           return true; // redelivery
 
         const offer = {
-          transferId: payload.transferId,
+          transferId: message.transferId,
           direction: "in",
           peer: from,
           peerName: contact.name,
-          files: Array.isArray(payload.files) ? payload.files.slice(0, MAX_OFFER_NAMES).map((f) => ({ name: String(f?.name ?? "").slice(0, 255), size: Number(f?.size) || 0, files: Number(f?.files) || 0 })) : [],
-          fileCount: Number(payload.fileCount) || 0,
-          totalBytes: Number(payload.totalBytes) || 0,
+          files: message.files,
+          fileCount: message.fileCount,
+          totalBytes: message.totalBytes,
           state: "offered",
           createdAt: Date.now(),
         };
@@ -366,30 +362,20 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
 
       case "accept":
       case "decline": {
-        const waiter = waiters.get(payload.transferId);
+        const waiter = waiters.get(message.transferId);
 
         // Only the device we offered to can answer.
         if (!t || t.direction !== "out" || t.peer !== from || !waiter)
           return true;
 
-        if (payload.type === "accept") {
-          const port = Number(payload.port);
-          const addresses = Array.isArray(payload.addresses) ? payload.addresses.filter((a) => typeof a === "string" && net.isIP(a)).slice(0, 16) : [];
+        // A relay-only answer has no address to try directly; give the
+        // sender's probe one that fails fast.
+        if (message.type === "accept" && !message.addresses.length)
+          message.addresses.push("127.0.0.1");
 
-          if (!Number.isInteger(port) || port < 1 || port > 65535 || typeof payload.token !== "string" || payload.token.length > 63 || (!addresses.length && !payload.relay))
-            return true;
-
-          if (!addresses.length)
-            addresses.push("127.0.0.1");
-
-          clearTimeout(waiter.timer);
-          waiters.delete(payload.transferId);
-          waiter.resolve({ type: "accept", token: payload.token, port, addresses, relay: Boolean(payload.relay) });
-        } else {
-          clearTimeout(waiter.timer);
-          waiters.delete(payload.transferId);
-          waiter.resolve({ type: "decline" });
-        }
+        clearTimeout(waiter.timer);
+        waiters.delete(message.transferId);
+        waiter.resolve(message);
 
         return true;
       }
@@ -423,7 +409,7 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
 
     clearTimeout(waiter.timer);
     waiters.delete(transferId);
-    sendTo(t.peer, { type: "cancel", transferId }).catch(() => {});
+    sendTo(t.peer, "cancel", { transferId }).catch(() => {});
     waiter.reject(Object.assign(new Error("cancelled"), { code: "cancelled" }));
 
     return true;

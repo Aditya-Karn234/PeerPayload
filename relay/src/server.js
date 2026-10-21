@@ -1,7 +1,7 @@
 const http = require("http");
 const { WebSocketServer } = require("ws");
 
-const { verifyTicket } = require("./ticket");
+const { verifyTicket } = require("peerpayload-protocol");
 
 // Blind relay for transfers whose two machines can't reach each other
 // directly (different NATs, firewalls). Each side opens a WebSocket with a

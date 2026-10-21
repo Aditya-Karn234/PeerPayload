@@ -9,6 +9,7 @@
     "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
+    "peerpayload-protocol": "file:../protocol",
     "ws": "^8.18.0"
   }
 }

@@ -28,6 +28,7 @@ const NODE_PACKAGES = ["client-core", "relay", "connect/core", "connect/mailbox"
 const SUITES = [
   { name: "engine-lib", cwd: ".", cmd: [path.join(buildDir, "engine", `engine_lib_test${exe}`)] },
   { name: "engine", cwd: ".", cmd: ["node", "--test", "tests/engine/*.test.js"] },
+  { name: "protocol", cwd: "protocol", cmd: ["node", "--test", "test/*.test.js"] },
   { name: "relay", cwd: "relay", cmd: ["node", "--test", "test/*.test.js"] },
   { name: "connect-mailbox", cwd: "connect/mailbox", cmd: ["node", "--test", "test/*.test.js"] },
   { name: "connect-core", cwd: "connect/core", cmd: ["node", "--test", "test/*.test.js"] },
@@ -90,9 +91,19 @@ function buildEngine() {
   return run(["cmake", "--build", "build", "--parallel", String(os.availableParallelism?.() || os.cpus().length)], ".") === 0;
 }
 
+// Installed, and not older than the lockfile (npm records what it
+// installed in node_modules/.package-lock.json).
+function depsUpToDate(pkg) {
+  try {
+    return fs.statSync(path.join(root, pkg, "node_modules", ".package-lock.json")).mtimeMs >= fs.statSync(path.join(root, pkg, "package-lock.json")).mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
 function installNodeDeps() {
   for (const pkg of NODE_PACKAGES) {
-    if (fs.existsSync(path.join(root, pkg, "node_modules")))
+    if (depsUpToDate(pkg))
       continue;
 
     step(`npm ci (${pkg})`);

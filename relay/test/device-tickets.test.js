@@ -6,8 +6,9 @@ const crypto = require("crypto");
 const WebSocket = require("ws");
 
 const { createRelay } = require("../src/server");
-const { verifyTicket, issueTicket } = require("../src/ticket");
-const { issueDeviceTicket } = require("../../client-core/deviceTicket");
+const { verifyTicket, issueBackendTicket, issueDeviceTicket } = require("peerpayload-protocol");
+
+const issueTicket = (...args) => issueBackendTicket(...args).ticket;
 
 // Device identities come from the engine's ppkeygen (Node can't create
 // X.509 certificates itself), so build the engine before running these.

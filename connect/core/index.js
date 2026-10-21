@@ -5,4 +5,6 @@ module.exports = {
   ...require("./contacts"),
   ...require("./mailboxClient"),
   ...require("./transfers"),
+  parseMessage: require("peerpayload-protocol").parseMessage,
+  makeMessage: require("peerpayload-protocol").makeMessage,
 };

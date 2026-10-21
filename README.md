@@ -58,7 +58,7 @@ This is a **control plane / data plane split**:
   path was used (`direct` or `relay`).
   The same relay also serves PeerPayload Connect, which has no backend:
   there each device signs its own ticket with its device key
-  (`client-core/deviceTicket.js`), naming the device it wants to meet. The
+  (format in `protocol/relayTickets.js`), naming the device it wants to meet. The
   relay checks the certificate matches the claimed device ID and the
   signature is valid, and only pairs two devices that name each other.
   Because anyone can make a key pair, the relay caps connections per IP
@@ -385,7 +385,10 @@ cli/                   peerpayload command-line client
 packages/ui/           shared presentational React components
 frontend/              legacy web dashboard — not wired to the current backend, see Known limitations
 relay/                 stateless WebSocket relay for transfers that can't connect directly
+protocol/              every wire format defined once (tickets, tokens, cards, envelopes, Connect messages)
+connect/core/          PeerPayload Connect client logic: identity, pairing, contacts, mailbox client, transfers
+connect/mailbox/       Connect's store-and-forward service for encrypted messages between devices
 render.yaml            Render Blueprint (backend + Postgres, relay)
-tools/                 benchmark harness, latency proxy, bench-log analysis
+tools/                 test-all.js (npm test), benchmark harness, latency proxy, bench-log analysis
 docker-compose.yml     local Postgres + the old standalone backend/frontend pair (see frontend/ note)
 ```

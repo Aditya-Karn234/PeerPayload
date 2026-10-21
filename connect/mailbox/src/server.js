@@ -1,7 +1,16 @@
 const http = require("http");
 const { WebSocketServer } = require("ws");
 
-const { verifyEnvelope, verifyInboxToken } = require("./verify");
+const { verifyEnvelopeSignature, verifyInboxToken } = require("peerpayload-protocol");
+
+const verifyEnvelope = (e) => {
+  try {
+    verifyEnvelopeSignature(e);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 // PeerPayload Connect mailbox: store-and-forward for small envelopes
 // (pairing, transfer offers/answers, later messages) between devices that

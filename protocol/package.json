@@ -1,0 +1,10 @@
+{
+  "name": "peerpayload-protocol",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Every PeerPayload wire format defined once: device IDs, contact cards, envelopes, inbox tokens, relay tickets, Connect messages. Used by both the side that makes a format and the side that checks it. No dependencies.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  }
+}

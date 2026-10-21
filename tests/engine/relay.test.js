@@ -7,7 +7,9 @@ const fs = require("fs");
 const path = require("path");
 const h = require("./harness");
 const { createRelay } = require("../../relay/src/server");
-const { issueTicket } = require("../../relay/src/ticket");
+const { issueBackendTicket, issueDeviceTicket } = require("../../protocol");
+
+const issueTicket = (...args) => issueBackendTicket(...args).ticket;
 const { runSender, senderReportStatus, startReceiverBridge } = require("../../client-core/transferPolicy");
 
 const SECRET = "relay-test-secret".padEnd(40, "z");
@@ -196,7 +198,6 @@ test("relay: no direct path and no working relay -> not_reachable", async (t) =>
 });
 
 test("relay: Connect-style — device identities, mutual TLS, device-signed tickets, no backend", async (t) => {
-  const { issueDeviceTicket } = require("../../client-core/deviceTicket");
   const { execFileSync } = require("child_process");
   const keygen = path.join(path.dirname(path.dirname(h.senderPath)), "engine", `ppkeygen${process.platform === "win32" ? ".exe" : ""}`);
   const { srcDir, outDir } = setup(t);

@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "client-core": "file:../../client-core",
+    "peerpayload-protocol": "file:../../protocol",
     "ws": "^8.18.0"
   }
 }
