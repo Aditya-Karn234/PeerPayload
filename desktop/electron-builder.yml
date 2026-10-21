@@ -1,5 +1,9 @@
 appId: com.peerpayload.desktop
-productName: PeerPayload
+# Display name (installer, shortcuts, exe). The app's data folder comes
+# from package.json "name" (peerpayload-desktop), not this, so renaming
+# here keeps everyone's saved login and settings. Don't add productName
+# to package.json: that would move the data folder.
+productName: PeerPayload Enterprise
 directories:
   output: dist
   buildResources: build

@@ -60,7 +60,7 @@ function handleIncoming(transfer) {
     title: `${transfer.senderUsername} wants to send you a file`,
     body: transfer.fileCount
       ? `${transfer.fileCount} file(s), ${transfer.totalBytes ? Math.round(transfer.totalBytes / 1024 / 1024) : "?"} MB`
-      : "Open PeerPayload to accept or decline.",
+      : "Open PeerPayload Enterprise to accept or decline.",
   });
 
   notification.on("click", () => getMainWindow?.()?.show());

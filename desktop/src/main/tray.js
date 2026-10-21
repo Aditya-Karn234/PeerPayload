@@ -11,11 +11,11 @@ const ICON_DATA_URL =
 export function createTray({ onOpen, onQuit, onToggleAutoAccept, getAutoAccept }) {
   tray = new Tray(nativeImage.createFromDataURL(ICON_DATA_URL));
 
-  tray.setToolTip("PeerPayload");
+  tray.setToolTip("PeerPayload Enterprise");
 
   function rebuildMenu() {
     const menu = Menu.buildFromTemplate([
-      { label: "Open PeerPayload", click: onOpen },
+      { label: "Open PeerPayload Enterprise", click: onOpen },
       { type: "separator" },
       {
         label: "Auto-accept incoming transfers",
