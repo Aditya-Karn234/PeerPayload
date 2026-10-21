@@ -1,6 +1,6 @@
 {
   "name": "peerpayload-connect-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "PeerPayload Connect desktop app: a device identity created on this machine, contacts added by invite link or QR code, and file/folder transfers between paired devices. No accounts.",
   "main": "out/main/index.js",

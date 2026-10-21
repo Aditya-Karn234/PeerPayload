@@ -33,6 +33,14 @@ const { seal } = require("./envelope");
 // How long a sender waits for the other device to answer an offer.
 const OFFER_TIMEOUT_MS = 10 * 60 * 1000;
 
+// The engine's 64 KiB default spends most of its time waiting on per-chunk
+// acks: Connect measured 12-17 MiB/s direct with it, against 90-115 MiB/s
+// at 1 MiB (about a full gigabit LAN). 1 MiB keeps the sender's memory
+// small (16 chunks in flight = 16 MiB) and resume steps fine-grained;
+// 8 MiB is faster still only above gigabit. Over the internet the
+// connection's own bandwidth is the limit either way.
+const CHUNK_SIZE = 1024 * 1024;
+
 function summarize(paths) {
   const files = [];
   let fileCount = 0;
@@ -218,7 +226,7 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
 
       outcome = await runSender({
         exePath: engine.senderPath,
-        baseArgs: ["--token", answer.token, "--transfer-id", transferId, ...identityArgs(), "--pin-sha256", peerFingerprint, ...paths],
+        baseArgs: ["--token", answer.token, "--transfer-id", transferId, "--chunk-size", String(CHUNK_SIZE), ...identityArgs(), "--pin-sha256", peerFingerprint, ...paths],
         target: { host, port: answer.port },
         relay: answer.relay ? relayFor(transferId, "sender", peerFingerprint) : null,
         probe,

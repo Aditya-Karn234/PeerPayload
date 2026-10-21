@@ -166,9 +166,15 @@ changed in Settings:
 - relay: `wss://peerpayload-connect-relay.onrender.com/v1/connect`
 
 On the free plan they sleep after 15 minutes idle (about a minute to
-wake), relayed transfers are slow (about 0.4 MiB/s measured), and the
-mailbox keeps undelivered messages in memory only, so a restart drops
-them.
+wake), and the mailbox keeps undelivered messages in memory only, so a
+restart drops them.
+
+Speed: direct transfers on a network run at about 130 MiB/s on one
+machine (1 MiB chunks; the engine's 64 KiB default managed 12-17 MiB/s).
+Between networks the limit is the internet connections themselves,
+usually the sender's upload: a relayed test ran at 0.23-0.37 MiB/s,
+matching that test machine's own ~3 Mbit/s upload, so the relay's
+capacity wasn't what was measured.
 
 Not done yet: transfer history is kept only while the app runs; no
 messaging, multi-device or revocation yet; Android not started.
