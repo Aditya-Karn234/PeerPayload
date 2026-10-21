@@ -14,6 +14,8 @@ const { hashSecret } = require("./pairing");
 //         "paired"  — both sides hold each other's card.
 // mailbox: where the contact collects messages (from their invite link or
 // pair request); contacts may use different mailboxes.
+// pairing: while "pending", the invite's secret and expiry, so the pair
+// request can be sent again until it's answered (dropped once paired).
 function openContacts(dir) {
   const file = path.join(dir, "contacts.json");
   let data = { contacts: {}, invites: {} };
@@ -48,21 +50,32 @@ function openContacts(dir) {
 
     // Adds or updates a contact from a card. Never downgrades "paired";
     // keeps the known mailbox unless a new one is given.
-    upsert(card, status, { mailbox } = {}) {
+    upsert(card, status, { mailbox, pairing } = {}) {
       verifyCard(card);
 
       const strip = ({ v, name, fp, cert, box }) => ({ v, name, fp, cert, box });
       const existing = data.contacts[card.fp];
+      const finalStatus = existing?.status === "paired" ? "paired" : status;
+      const keptPairing = finalStatus === "paired" ? undefined : pairing ?? existing?.pairing;
 
       data.contacts[card.fp] = {
         card: strip(card),
-        status: existing?.status === "paired" ? "paired" : status,
+        status: finalStatus,
         mailbox: mailbox ?? existing?.mailbox ?? null,
         addedAt: existing?.addedAt ?? new Date().toISOString(),
+        ...(keptPairing && { pairing: keptPairing }),
       };
       save();
 
       return publicView(data.contacts[card.fp]);
+    },
+
+    // Pair requests still waiting for an answer, with what's needed to send
+    // them again: [{ fp, secret, expiresAt }] (unexpired only).
+    pendingPairings(now = Date.now()) {
+      return Object.values(data.contacts)
+        .filter((c) => c.status === "pending" && c.pairing && c.pairing.expiresAt >= now)
+        .map((c) => ({ fp: c.card.fp, secret: c.pairing.secret, expiresAt: c.pairing.expiresAt }));
     },
 
     remove(fp) {

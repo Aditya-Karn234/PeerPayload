@@ -159,3 +159,60 @@ test("history: transfers running when the app stopped come back as interrupted; 
   assert.deepEqual(manager.list().map((x) => x.transferId), ["aaaaaaaa1"], "only the resumable one is kept");
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "transfers.json"), "utf8")).length, 1, "and that's what's on disk");
 });
+
+test("resume: the sender removed it, so the receiver's resume ends instead of waiting forever", async (t) => {
+  const { alice, bob } = await pairedDevices(t, "Erin", "Frank");
+  const { id, received } = await startThenPause(alice, bob, "sender");
+  assert.equal(received.resumable, true);
+
+  // Frank deletes his copy; Erin hears about it and can't resume any more.
+  assert.equal(bob.forget(id), true);
+  assert.equal(bob.transfers().some((x) => x.transferId === id), false);
+  await until("Erin's copy ended", () => alice.latest.get(id).ended === true);
+  const ended = alice.latest.get(id);
+  assert.equal(ended.state, "cancelled");
+  assert.equal(ended.resumable, false);
+  assert.match(ended.error, /Frank removed this transfer/);
+
+  // And she can delete it, partial files included.
+  assert.equal(alice.forget(id), true);
+  assert.ok(!fs.existsSync(received.stagingDir), "partly received files deleted");
+});
+
+test("resume: asking a sender that no longer has the transfer ends it on this side too", async (t) => {
+  const { alice, bob } = await pairedDevices(t, "Gina", "Hal");
+  const { id } = await startThenPause(alice, bob, "receiver");
+
+  // Hal's record is gone without telling Gina (an older app, a reinstall):
+  // simulate by restarting him with no history.
+  bob.stop();
+  fs.rmSync(path.join(tmp, "Hal", "transfers.json"));
+  const hal = device(t, "Hal");
+  await until("Hal back online", () => hal.status().connected);
+
+  await alice.resume(id);
+  await until("Gina's copy ended", () => alice.latest.get(id).ended === true);
+  assert.equal(alice.latest.get(id).resumable, false);
+});
+
+test("resume: a resume request nobody answers goes back to interrupted", async (t) => {
+  const dir = path.join(tmp, "unanswered");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "transfers.json"), JSON.stringify([
+    { transferId: "abcdefgh12", direction: "in", peer: "f".repeat(64), peerName: "Ivy", files: [], fileCount: 1, totalBytes: 10, state: "interrupted", started: true, createdAt: 1 },
+  ]));
+  const updates = [];
+  const manager = createTransferManager({
+    identity: { dir, fingerprint: "e".repeat(64) },
+    contacts: { get: () => ({ status: "paired", name: "Ivy" }), card: () => null },
+    sendEnvelope: async () => {},
+    engine,
+    offerTimeoutMs: 150,
+    onUpdate: (x) => updates.push(x),
+  });
+  // seal() needs a real card; only the waiting timeout matters here.
+  await manager.resume("abcdefgh12").catch(() => {});
+  await until("back to interrupted", () => manager.get("abcdefgh12").state === "interrupted", 3000);
+  assert.match(manager.get("abcdefgh12").error, /no answer from Ivy/);
+  assert.equal(manager.get("abcdefgh12").resumable, true);
+});

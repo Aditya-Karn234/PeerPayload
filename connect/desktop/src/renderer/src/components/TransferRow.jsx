@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { File, Folder, Pause, Play, X, FolderOpen, ArrowUpRight, ArrowDownLeft } from "lucide-react";
+import { File, Folder, Pause, Play, X, FolderOpen, ArrowUpRight, ArrowDownLeft, Trash2 } from "lucide-react";
 import { IconButton, Meter, Mono, StatusBadge } from "@peerpayload/ui";
 
 import { errorMessage, formatRemaining, sizeLabel, transferTitle } from "../lib/util";
@@ -72,6 +72,14 @@ export default function TransferRow({ transfer: t, rate }) {
     }
   };
 
+  // A resumable one loses its progress for good, on both devices: ask.
+  const remove = async () => {
+    if (t.resumable && !window.confirm(`Remove this transfer? It can't be resumed afterwards${outgoing ? "" : ", and the part already received is deleted"}. ${t.peerName} is told too.`))
+      return;
+
+    await window.connect.forget(t.transferId);
+  };
+
   return (
     <li
       className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 border-b border-[var(--color-border)] px-1 py-3.5 last:border-b-0 md:grid-cols-[auto_minmax(0,1.1fr)_minmax(0,1fr)_auto]"
@@ -117,6 +125,7 @@ export default function TransferRow({ transfer: t, rate }) {
         {t.resumable && <IconButton icon={Play} label="Resume" onClick={act(() => window.connect.resume(t.transferId))} />}
         {outgoing && t.state === "offered" && <IconButton icon={X} label="Cancel" onClick={act(() => window.connect.cancelOffer(t.transferId))} />}
         {!outgoing && t.state === "complete" && <IconButton icon={FolderOpen} label="Open received files" onClick={() => window.connect.openDownloads()} />}
+        {!running && t.state !== "offered" && <IconButton icon={Trash2} label="Remove" onClick={act(remove)} />}
       </div>
     </li>
   );

@@ -5,7 +5,10 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const { createConnectNode } = require("..");
+const net = require("net");
+const { WebSocketServer } = require("ws");
+
+const { createConnectNode, createMailboxClient, createIdentity } = require("..");
 const { createMailbox } = require("../../mailbox/src/server");
 
 // Whole Connect devices, as an app runs them: setup, invite link, pairing,
@@ -50,8 +53,8 @@ after(async () => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-function node(t, name, mailboxUrl) {
-  const n = createConnectNode({ dir: path.join(tmp, name), keygenPath, engine, mailboxUrl });
+function node(t, name, mailboxUrl, options = {}) {
+  const n = createConnectNode({ dir: path.join(tmp, name), keygenPath, engine, mailboxUrl, ...options });
   const seen = { paired: [], transfers: new Map() };
 
   n.on("paired", (c) => seen.paired.push(c));
@@ -117,4 +120,54 @@ test("node: an invite link works once; a second device using it isn't paired", a
   await sleep(700);
   assert.equal(carol.contacts()[0].status, "pending", "Carol is never accepted");
   assert.deepEqual(alice.contacts().map((c) => c.name), ["Bob"]);
+});
+
+const freePort = () =>
+  new Promise((resolve) => {
+    const s = net.createServer().listen(0, "127.0.0.1", () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+
+test("node: a pair request that couldn't be sent goes again until it's answered", async (t) => {
+  // Alice's mailbox is down when Bob opens her link.
+  const port = await freePort();
+  const alice = node(t, "alice3", `http://127.0.0.1:${port}`);
+  const bob = node(t, "bob3", mailboxB, { pairRetryMs: 200 });
+  alice.setup("Alice");
+  bob.setup("Bob");
+  await until(() => bob.status().connected);
+
+  const pending = await bob.addContact(alice.createInvite().link);
+  assert.equal(pending.status, "pending", "adding still works; the request goes later");
+  await sleep(500);
+  assert.equal(alice.seen.paired.length, 0);
+
+  // Her mailbox comes up; Bob's retries get through and Alice answers.
+  const late = createMailbox({ log: { warn() {} } });
+  t.after(() => late.close());
+  await late.listen(port, "127.0.0.1");
+  alice.reconnectNow();
+
+  await until(() => alice.seen.paired.length === 1 && bob.seen.paired.length === 1);
+  assert.equal(bob.contacts()[0].status, "paired");
+  assert.equal(alice.contacts()[0].status, "paired");
+});
+
+test("mailbox client: replaces a connection that stops answering pings", async (t) => {
+  // A "mailbox" whose connections go silent: never answers pings.
+  const wss = new WebSocketServer({ port: 0, host: "127.0.0.1", autoPong: false });
+  let connections = 0;
+  wss.on("connection", () => connections++);
+  t.after(() => new Promise((r) => wss.close(r)));
+  await new Promise((r) => wss.once("listening", r));
+
+  const identity = createIdentity({ dir: path.join(tmp, "heartbeat"), name: "Heartbeat", keygenPath });
+  const client = createMailboxClient({ url: `http://127.0.0.1:${wss.address().port}`, identity, onEnvelope() {}, heartbeatMs: 100 });
+  t.after(() => client.stop());
+  client.start();
+
+  // Dead after two silent pings, then a fresh connection (backoff 1 s at most).
+  await until(() => connections >= 2, 5000);
 });

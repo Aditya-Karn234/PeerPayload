@@ -137,6 +137,7 @@ test("messages: every type round-trips through makeMessage -> JSON -> parseMessa
     { type: "accept", transferId, token: "t", port: 9, addresses: ["::1", "10.0.0.2"], relay: false });
   assert.deepEqual(roundTrip("decline", { transferId }), { type: "decline", transferId });
   assert.deepEqual(roundTrip("cancel", { transferId }), { type: "cancel", transferId });
+  assert.deepEqual(roundTrip("cancel", { transferId, removed: true }), { type: "cancel", transferId, removed: true });
   assert.deepEqual(roundTrip("pair-accept"), { type: "pair-accept" });
 
   const request = p.makeMessage("pair-request", { secret: "abc", card: p.contactCard(alice) });

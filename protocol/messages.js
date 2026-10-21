@@ -113,10 +113,12 @@ const MESSAGES = {
   decline: { fields: { transferId } },
   // Either side stops: the sender gave up (before an answer, or after the
   // transfer failed), or either side paused a running transfer, which
-  // leaves it resumable.
-  cancel: { fields: { transferId, paused: optional(bool) } },
+  // leaves it resumable. removed: the sender of this deleted the transfer
+  // (or never had it), so it can't be resumed; the other side ends its
+  // copy too. Older apps ignore the flag and treat it as a plain cancel.
+  cancel: { fields: { transferId, paused: optional(bool), removed: optional(bool) } },
   // The receiver asks the sender to resume an interrupted transfer (the
-  // sender answers with a resume offer).
+  // sender answers with a resume offer, or a removed cancel).
   "resume-request": { fields: { transferId } },
 };
 

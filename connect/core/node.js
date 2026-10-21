@@ -24,14 +24,20 @@ const { createTransferManager } = require("./transfers");
 //   "contacts"  [contact, ...]                   contact list changed
 //   "paired"    contact                          a pairing completed
 //   "transfer"  transfer                         a transfer changed (see transfers.js)
+//   "transfer-removed" transferId                one was deleted (forget)
 //   "log"       message
-function createConnectNode({ dir, keygenPath, engine, mailboxUrl = null, relayUrl = null }) {
+// How often unanswered pair requests are sent again (and on every mailbox
+// reconnect), until answered or the invite expires.
+const PAIR_RETRY_MS = 60_000;
+
+function createConnectNode({ dir, keygenPath, engine, mailboxUrl = null, relayUrl = null, pairRetryMs = PAIR_RETRY_MS }) {
   const events = new EventEmitter();
   let identity = null;
   let contacts = null;
   let client = null;
   let transfers = null;
   let connected = false;
+  let pairTimer = null;
 
   const emit = (name, data) => events.emit(name, data);
   const log = (message) => emit("log", message);
@@ -95,6 +101,17 @@ function createConnectNode({ dir, keygenPath, engine, mailboxUrl = null, relayUr
     }
   }
 
+  function pairRequest(secret) {
+    return { secret, card: contactCard(identity), ...(mailboxUrl && { mailbox: mailboxUrl }) };
+  }
+
+  // The other device answers a repeated request again without needing the
+  // invite twice (see handlePairing), so resending is harmless.
+  function resendPairRequests() {
+    for (const { fp, secret } of contacts.pendingPairings())
+      sendMessage(contacts.card(fp), "pair-request", pairRequest(secret)).catch((err) => log(`pair request to ${fp.slice(0, 8)} not sent yet: ${err.message}`));
+  }
+
   async function onEnvelope(opened) {
     if (!transfers.handleEnvelope(opened))
       await handlePairing(opened);
@@ -113,6 +130,7 @@ function createConnectNode({ dir, keygenPath, engine, mailboxUrl = null, relayUr
       engine,
       relayUrl,
       onUpdate: (t) => emit("transfer", t),
+      onRemove: (transferId) => emit("transfer-removed", transferId),
       log,
     });
 
@@ -130,13 +148,20 @@ function createConnectNode({ dir, keygenPath, engine, mailboxUrl = null, relayUr
             connected = state === "connected";
             emit("status", { connected });
           }
+
+          if (state === "connected")
+            resendPairRequests();
         },
       });
       client.start();
+      pairTimer = setInterval(resendPairRequests, pairRetryMs);
+      pairTimer.unref?.();
     }
   }
 
   function stop() {
+    clearInterval(pairTimer);
+    pairTimer = null;
     client?.stop();
     client = null;
     connected = false;
@@ -149,6 +174,10 @@ function createConnectNode({ dir, keygenPath, engine, mailboxUrl = null, relayUr
     off: (name, fn) => events.off(name, fn),
     start,
     stop,
+    // The network just came back: reconnect now rather than after the backoff.
+    reconnectNow() {
+      client?.reconnectNow();
+    },
 
     status() {
       return {
@@ -196,14 +225,13 @@ function createConnectNode({ dir, keygenPath, engine, mailboxUrl = null, relayUr
       if (invite.card.fp === identity.fingerprint)
         throw new Error("that's this device's own invite link");
 
-      contacts.upsert(invite.card, "pending", { mailbox: invite.mailbox });
+      // Kept until answered, so a request that's lost or can't be sent
+      // right now goes again (resendPairRequests).
+      contacts.upsert(invite.card, "pending", { mailbox: invite.mailbox, pairing: { secret: invite.secret, expiresAt: invite.expiresAt } });
       contactsChanged();
 
-      await sendMessage(invite.card, "pair-request", {
-        secret: invite.secret,
-        card: contactCard(identity),
-        ...(mailboxUrl && { mailbox: mailboxUrl }),
-      });
+      await sendMessage(invite.card, "pair-request", pairRequest(invite.secret)).catch((err) =>
+        log(`pair request not sent yet, will retry: ${err.message}`));
 
       return contactView(contacts.get(invite.card.fp));
     },
@@ -252,6 +280,12 @@ function createConnectNode({ dir, keygenPath, engine, mailboxUrl = null, relayUr
     clearFinished() {
       requireStarted();
       return transfers.clearFinished();
+    },
+    // Deletes one transfer that isn't running (and any partly received
+    // files); the other device is told, so it stops waiting to resume it.
+    forget(transferId) {
+      requireStarted();
+      return transfers.forget(transferId);
     },
     transfers() {
       return transfers ? transfers.list() : [];

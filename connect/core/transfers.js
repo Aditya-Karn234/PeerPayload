@@ -25,7 +25,10 @@ const { seal } = require("./envelope");
 //                       the transfer itself failed)
 //   either   -> cancel { paused: true } (stopped a running transfer; it
 //                       stays resumable)
-//   receiver -> resume-request (asks the sender for a resume offer)
+//   either   -> cancel { removed: true } (deleted it, or never had it: the
+//                       other side ends its copy for good)
+//   receiver -> resume-request (asks the sender for a resume offer; one
+//                       nobody answers goes back to interrupted)
 //
 // The bytes then go engine to engine, mutually authenticated with the two
 // device certificates: the sender pins the receiver's device ID, and the
@@ -61,7 +64,7 @@ const ACTIVE_STATES = new Set(["offered", "sending", "receiving"]);
 // stored on a record.
 const STORED_FIELDS = [
   "transferId", "direction", "peer", "peerName", "files", "fileCount", "totalBytes", "state", "error",
-  "createdAt", "updatedAt", "started", "path", "paths", "downloadDir", "stagingDir", "savedAs",
+  "createdAt", "updatedAt", "started", "ended", "path", "paths", "downloadDir", "stagingDir", "savedAs",
 ];
 
 function summarize(paths) {
@@ -218,19 +221,22 @@ function createTransferManager({
   engine,
   relayUrl = null,
   onUpdate = () => {},
+  onRemove = () => {},
   log = () => {},
   probe = probeTcp,
   historyFile = path.join(identity.dir, "transfers.json"),
+  offerTimeoutMs = OFFER_TIMEOUT_MS,
 }) {
   const transfers = new Map(); // transferId -> record
   const waiters = new Map(); // transferId -> { resolve, reject, timer }
   const receivers = new Map(); // transferId -> engine handle, while receiving
   const senders = new Map(); // transferId -> engine handle, while sending
   const pausing = new Set(); // transferIds being paused (their engine exit isn't a failure)
+  const resumeTimers = new Map(); // transferId -> timer, while a resume-request waits
 
   // Can be picked up again: it got going (accepted) but didn't finish, and
-  // nobody said no.
-  const resumable = (t) => Boolean(t.started) && ["failed", "cancelled", "interrupted", "waiting"].includes(t.state);
+  // nobody said no or removed it.
+  const resumable = (t) => Boolean(t.started) && !t.ended && ["failed", "cancelled", "interrupted", "waiting"].includes(t.state);
 
   const snapshot = (t) => ({ ...t, files: t.files && [...t.files], resumable: resumable(t) });
 
@@ -330,7 +336,7 @@ function createTransferManager({
         const timer = setTimeout(() => {
           waiters.delete(t.transferId);
           reject(Object.assign(new Error("no answer from the other device"), { code: "timed_out" }));
-        }, OFFER_TIMEOUT_MS);
+        }, offerTimeoutMs);
 
         waiters.set(t.transferId, { resolve, reject, timer });
       });
@@ -346,6 +352,10 @@ function createTransferManager({
     } catch (err) {
       waiters.get(t.transferId) && clearTimeout(waiters.get(t.transferId).timer);
       waiters.delete(t.transferId);
+
+      // Ended for good meanwhile (the other side removed it): keep that.
+      if (t.ended)
+        return snapshot(t);
 
       if (err.code === "timed_out")
         sendTo(t.peer, "cancel", { transferId: t.transferId }).catch(() => {});
@@ -398,6 +408,9 @@ function createTransferManager({
     }
 
     const ok = outcome.finalEvent?.event === "transfer_complete";
+
+    if (t.ended && !ok)
+      return snapshot(t);
 
     // The receiver would otherwise keep listening until its own timeout.
     if (!ok)
@@ -504,7 +517,7 @@ function createTransferManager({
 
       if (pausing.delete(transferId))
         update(t, { state: "interrupted", error: t.error ?? "paused" });
-      else if (t.state !== "cancelled")
+      else if (t.state !== "cancelled" && !t.ended)
         update(t, { state: "failed", error: err.message });
 
       return snapshot(t);
@@ -514,7 +527,8 @@ function createTransferManager({
     }
 
     if (finalEvent.event !== "transfer_complete") {
-      update(t, { state: "failed", error: finalEvent.reason });
+      if (!t.ended)
+        update(t, { state: "failed", error: finalEvent.reason });
       return snapshot(t);
     }
 
@@ -593,6 +607,13 @@ function createTransferManager({
     }
 
     update(t, { state: "waiting", error: undefined });
+    clearTimeout(resumeTimers.get(transferId));
+    resumeTimers.set(transferId, setTimeout(() => {
+      resumeTimers.delete(transferId);
+
+      if (t.state === "waiting")
+        update(t, { state: "interrupted", error: `no answer from ${t.peerName}; try again when it's online` });
+    }, offerTimeoutMs));
     await sendTo(t.peer, "resume-request", { transferId });
 
     return snapshot(t);
@@ -620,6 +641,8 @@ function createTransferManager({
           // The sender resuming something we already accepted: accept
           // again into the same staging folder, without asking.
           if (message.resume && t.direction === "in" && t.peer === from && resumable(t)) {
+            clearTimeout(resumeTimers.get(t.transferId));
+            resumeTimers.delete(t.transferId);
             update(t, { state: "offered" });
             accept(t.transferId).catch((err) => log(`resuming ${t.transferId} failed: ${err.message}`));
           }
@@ -671,6 +694,14 @@ function createTransferManager({
           return true;
         }
 
+        // The other side deleted it: nothing left to resume from.
+        if (message.removed) {
+          if (t.state !== "complete")
+            endForGood(t, `${t.peerName} removed this transfer`);
+
+          return true;
+        }
+
         if (t.direction !== "in")
           return true;
 
@@ -688,6 +719,10 @@ function createTransferManager({
       case "resume-request":
         if (t && t.direction === "out" && t.peer === from && resumable(t))
           resume(t.transferId).catch((err) => log(`resume of ${t.transferId} requested, but: ${err.message}`));
+        // Deleted here (or finished, or never ours): say so, or the other
+        // side waits for an offer that will never come.
+        else if (!t || (t.peer === from && t.direction === "out"))
+          sendTo(from, "cancel", { transferId: message.transferId, removed: true }).catch(() => {});
 
         return true;
     }
@@ -711,6 +746,52 @@ function createTransferManager({
     return true;
   }
 
+  // Ends a transfer for good: stops whatever is running for it and marks
+  // it not resumable.
+  function endForGood(t, reason) {
+    const waiter = waiters.get(t.transferId);
+
+    clearTimeout(resumeTimers.get(t.transferId));
+    resumeTimers.delete(t.transferId);
+
+    if (waiter) {
+      clearTimeout(waiter.timer);
+      waiters.delete(t.transferId);
+      waiter.reject(Object.assign(new Error(reason), { code: "cancelled" }));
+    }
+
+    update(t, { state: "cancelled", ended: true, error: reason });
+    (senders.get(t.transferId) ?? receivers.get(t.transferId))?.kill();
+  }
+
+  // Deletes one transfer that isn't running: its record, and for an
+  // incoming one the partly received files. Tells the other device, unless
+  // it finished, so it doesn't keep it waiting to be resumed.
+  function forget(transferId) {
+    const t = transfers.get(transferId);
+
+    if (!t)
+      return false;
+
+    if (ACTIVE_STATES.has(t.state))
+      throw new Error("stop the transfer first");
+
+    if (!["complete", "declined"].includes(t.state) && contacts.get(t.peer))
+      sendTo(t.peer, "cancel", { transferId, removed: true }).catch(() => {});
+
+    clearTimeout(resumeTimers.get(transferId));
+    resumeTimers.delete(transferId);
+
+    if (t.direction === "in" && t.stagingDir)
+      fs.rmSync(t.stagingDir, { recursive: true, force: true });
+
+    transfers.delete(transferId);
+    save();
+    onRemove(transferId);
+
+    return true;
+  }
+
   // Forgets finished transfers (not ones that are running or resumable).
   function clearFinished() {
     for (const [id, t] of transfers)
@@ -728,6 +809,7 @@ function createTransferManager({
     resume,
     cancelOffer,
     clearFinished,
+    forget,
     handleEnvelope,
     list: () => [...transfers.values()].sort((a, b) => b.createdAt - a.createdAt).map(snapshot),
     get: (id) => (transfers.has(id) ? snapshot(transfers.get(id)) : null),

@@ -44,6 +44,13 @@ export default function App() {
         setNotice(`You and ${data.name} are now paired.`);
       else if (name === "transfer")
         setTransfers((prev) => new Map(prev).set(data.transferId, data));
+      else if (name === "transfer-removed")
+        setTransfers((prev) => {
+          const next = new Map(prev);
+
+          next.delete(data);
+          return next;
+        });
     });
   }, [refresh]);
 

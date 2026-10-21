@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, Notification, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, Notification, powerMonitor, shell } from "electron";
 import fs from "fs";
 import path from "path";
 import QRCode from "qrcode";
@@ -84,7 +84,7 @@ function startNode() {
 
   node = createConnectNode({ dir: identityDir(), keygenPath, engine, mailboxUrl, relayUrl });
 
-  for (const name of ["status", "contacts", "paired", "transfer"])
+  for (const name of ["status", "contacts", "paired", "transfer", "transfer-removed"])
     node.on(name, (data) => sendToRenderer(name, data));
 
   node.on("status", () => tray?.rebuild());
@@ -199,6 +199,7 @@ function registerIpcHandlers() {
   ipcMain.handle("pause", (event, transferId) => node.pause(transferId));
   ipcMain.handle("resume", (event, transferId) => node.resume(transferId));
   ipcMain.handle("clear-finished", () => node.clearFinished());
+  ipcMain.handle("forget", (event, transferId) => node.forget(transferId));
   ipcMain.handle("transfers", () => node.transfers());
 
   // Name, size and file count of picked or dropped items, for the list
@@ -285,6 +286,11 @@ function start() {
 
   startNode();
   registerIpcHandlers();
+
+  // After sleep or a locked stretch the mailbox connection is usually
+  // gone: reconnect straight away instead of waiting for the heartbeat.
+  for (const event of ["resume", "unlock-screen"])
+    powerMonitor.on(event, () => node?.reconnectNow());
   // Started at sign-in (see tray.js): straight to the tray.
   createWindow({ hidden: process.argv.includes("--hidden") });
   tray = createTray({ onOpen: showWindow, onQuit: quit, getStatus: () => node.status() });

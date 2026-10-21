@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld("connect", {
   pause: invoke("pause"),
   resume: invoke("resume"),
   clearFinished: invoke("clear-finished"),
+  forget: invoke("forget"),
   transfers: invoke("transfers"),
 
   describePaths: invoke("describe-paths"),
