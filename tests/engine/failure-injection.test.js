@@ -126,15 +126,18 @@ test("failure: port scans and garbage bytes don't kill the receiver", async (t) 
 
     // Bare connect-then-drop, the way a port scanner or health check looks.
     await new Promise((resolve) => net.connect(receiver.port, "127.0.0.1", function () { this.destroy(); resolve(); }));
-    // Random junk, then hang up.
+    // Random junk, then hang up. resume() so the receiver's FIN is read and
+    // "close" fires (on Linux it's a FIN, not a reset that errors out).
     await new Promise((resolve) => {
       const s = net.connect(receiver.port, "127.0.0.1", () => s.end(crypto.randomBytes(4096)));
+      s.resume();
       s.on("close", resolve);
       s.on("error", resolve);
     });
     // An HTTP request to the wrong port.
     await new Promise((resolve) => {
       const s = net.connect(receiver.port, "127.0.0.1", () => s.end("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
+      s.resume();
       s.on("close", resolve);
       s.on("error", resolve);
     });

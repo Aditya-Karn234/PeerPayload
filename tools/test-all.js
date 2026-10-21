@@ -25,13 +25,17 @@ const buildDir = path.join(root, "build");
 // require() of another package's source).
 const NODE_PACKAGES = ["client-core", "relay", "connect/core", "connect/mailbox"];
 
+// A hung test fails with its name after this long instead of stalling
+// the whole run (CI would otherwise sit until the job timeout).
+const TEST_TIMEOUT = "--test-timeout=120000";
+
 const SUITES = [
   { name: "engine-lib", cwd: ".", cmd: [path.join(buildDir, "engine", `engine_lib_test${exe}`)] },
-  { name: "engine", cwd: ".", cmd: ["node", "--test", "tests/engine/*.test.js"] },
-  { name: "protocol", cwd: "protocol", cmd: ["node", "--test", "test/*.test.js"] },
-  { name: "relay", cwd: "relay", cmd: ["node", "--test", "test/*.test.js"] },
-  { name: "connect-mailbox", cwd: "connect/mailbox", cmd: ["node", "--test", "test/*.test.js"] },
-  { name: "connect-core", cwd: "connect/core", cmd: ["node", "--test", "test/*.test.js"] },
+  { name: "engine", cwd: ".", cmd: ["node", "--test", TEST_TIMEOUT, "tests/engine/*.test.js"] },
+  { name: "protocol", cwd: "protocol", cmd: ["node", "--test", TEST_TIMEOUT, "test/*.test.js"] },
+  { name: "relay", cwd: "relay", cmd: ["node", "--test", TEST_TIMEOUT, "test/*.test.js"] },
+  { name: "connect-mailbox", cwd: "connect/mailbox", cmd: ["node", "--test", TEST_TIMEOUT, "test/*.test.js"] },
+  { name: "connect-core", cwd: "connect/core", cmd: ["node", "--test", TEST_TIMEOUT, "test/*.test.js"] },
 ];
 
 function parseArgs(argv) {
