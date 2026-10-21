@@ -86,32 +86,49 @@ const pickWillReturn = (app, paths) =>
 
 async function shot(page, name) {
   if (shots)
-    await page.screenshot({ path: path.join(shots, `${name}.png`), fullPage: true });
+    await page.screenshot({ path: path.join(shots, `${name}.png`) });
 }
 
 async function setUp(page, name) {
   await page.getByLabel("Your name").fill(name);
   await page.getByRole("button", { name: "Create my device identity" }).click();
-  await page.getByRole("heading", { name: "PeerPayload Connect" }).waitFor();
+  await page.getByRole("heading", { name: "Send files. Keep control." }).waitFor();
 }
 
-const tab = (page, name) => page.getByRole("navigation", { name: "Sections" }).getByRole("button", { name: new RegExp(`^${name}`) }).click();
+// Sidebar navigation.
+const go = (page, name) => page.getByRole("navigation", { name: "Sections" }).getByRole("button", { name: new RegExp(`^${name}`) }).click();
+const historyTab = (page, name) => page.getByRole("tablist", { name: "Transfer status" }).getByRole("tab", { name: new RegExp(`^${name}`) }).click();
 
-test("ui: two devices pair with an invite link and send a file", { timeout: 180000 }, async () => {
+// Transfer page: pick files (the stubbed dialog returns `files`), choose
+// the recipient, start.
+async function sendFiles(sender, toName, files) {
+  await pickWillReturn(sender.app, files);
+  await go(sender.page, "Transfer");
+  await sender.page.getByRole("button", { name: "Select files" }).click();
+  await sender.page.getByRole("list", { name: "Selected files" }).waitFor();
+  await sender.page.getByTestId(`recipient-${toName}`).click();
+  await sender.page.getByRole("button", { name: "Start transfer" }).click();
+}
+
+test("ui: two devices pair with an invite link and send a file", { timeout: 240000 }, async () => {
   const alice = await launch("alice");
   const bob = await launch("bob", { PEERPAYLOAD_MAILBOX: mailboxUrl });
 
   // First run.
   await alice.page.getByRole("heading", { name: "Welcome to PeerPayload Connect" }).waitFor();
-  await shot(alice.page, "1-setup");
+  await shot(alice.page, "01-setup-light");
   await setUp(alice.page, "Alice");
   await setUp(bob.page, "Bob");
 
-  // Alice has no mailbox yet: invites are disabled until she sets one.
+  // Alice has no mailbox yet: the pairing screen says so instead of
+  // offering an invite that couldn't work.
   await alice.page.getByTestId("connection").getByText("No mailbox set").waitFor();
-  assert.equal(await alice.page.getByRole("button", { name: "Create invite link" }).isDisabled(), true);
+  await go(alice.page, "Devices");
+  await alice.page.getByText("needs a mailbox to reach this one").waitFor();
+  assert.equal(await alice.page.getByRole("button", { name: "Create invite link" }).count(), 0);
 
-  await tab(alice.page, "Settings");
+  await go(alice.page, "Settings");
+  await alice.page.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name: "Network" }).click();
   await alice.page.getByLabel("Mailbox").fill("ftp://nope");
   await alice.page.getByRole("button", { name: "Save" }).click();
   await alice.page.getByRole("alert").getByText("must start with http").waitFor();
@@ -122,53 +139,66 @@ test("ui: two devices pair with an invite link and send a file", { timeout: 1800
   await bob.page.getByTestId("connection").getByText("Connected").waitFor();
 
   // Alice invites; Bob pastes the link.
-  await tab(alice.page, "Contacts");
+  await go(alice.page, "Devices");
   await alice.page.getByRole("button", { name: "Create invite link" }).click();
   await alice.page.getByRole("img", { name: "QR code of the invite link" }).waitFor();
   const link = await alice.page.getByTestId("invite-link").inputValue();
   assert.match(link, /^peerpayload:\/\/pair#/);
-  await shot(alice.page, "2-invite");
 
+  await go(bob.page, "Devices");
   await bob.page.getByLabel("Invite link").fill(link);
-  await bob.page.getByRole("button", { name: "Add contact" }).click();
-  await bob.page.getByTestId("contact-Alice").getByText(/^Paired/).waitFor({ timeout: 15000 });
+  await bob.page.getByRole("button", { name: "Add device" }).click();
+  await bob.page.getByTestId("contact-Alice").getByText(/^Paired$/).waitFor({ timeout: 15000 });
   await alice.page.getByText("You and Bob are now paired.").waitFor();
-  await alice.page.getByTestId("contact-Bob").getByText(/^Paired/).waitFor();
+  await alice.page.getByTestId("contact-Bob").getByText(/^Paired$/).waitFor();
+  await shot(alice.page, "02-devices-light");
 
   // Both sides show the same safety code.
   const code = async (page, who) => {
     const row = page.getByTestId(`contact-${who}`);
     await row.getByRole("button", { name: "Safety code" }).click();
-    return row.locator("p.font-mono").innerText();
+    return row.getByTestId("safety-code").innerText();
   };
   const aliceCode = await code(alice.page, "Bob");
   assert.match(aliceCode, /^\d{5}( \d{5}){5}$/);
   assert.equal(await code(bob.page, "Alice"), aliceCode);
-  await shot(bob.page, "3-paired");
+
+  // Start Transfer stays disabled until there's something and someone.
+  await go(bob.page, "Transfer");
+  const startButton = bob.page.getByRole("button", { name: "Start transfer" });
+  assert.equal(await startButton.isDisabled(), true);
 
   // Bob sends Alice a file; she accepts.
   const file = path.join(tmp, "holiday.jpg");
   fs.writeFileSync(file, crypto.randomBytes(2_500_000));
   await pickWillReturn(bob.app, [file]);
-  await bob.page.getByTestId("contact-Alice").getByRole("button", { name: "Send files" }).click();
+  await bob.page.getByRole("button", { name: "Select files" }).click();
+  await bob.page.getByRole("list", { name: "Selected files" }).getByText("holiday.jpg").waitFor();
+  assert.equal(await startButton.isDisabled(), true, "still needs a recipient");
+  await bob.page.getByTestId("recipient-Alice").click();
+  await shot(bob.page, "03-transfer-ready-light");
+  await startButton.click();
   await bob.page.getByTestId("transfer-out").getByText("Waiting for Alice to accept").waitFor();
 
   const offer = alice.page.getByRole("region", { name: "Offer from Bob" });
-  await offer.getByText("Bob wants to send you “holiday.jpg” (2.4 MB)").waitFor();
-  await shot(alice.page, "4-offer");
+  await offer.getByText(/wants to send you/).waitFor();
+  assert.match(await offer.innerText(), /Bob wants to send you “holiday\.jpg” \(2\.4 MB\)/);
+  await shot(alice.page, "04-offer-light");
   await offer.getByRole("button", { name: "Accept" }).click();
 
+  await historyTab(alice.page, "Completed");
   await alice.page.locator('[data-testid="transfer-in"][data-state="complete"]').waitFor({ timeout: 30000 });
-  await bob.page.locator('[data-testid="transfer-out"][data-state="complete"]').waitFor({ timeout: 30000 });
   const received = path.join(alice.home, "Downloads", "PeerPayload", "holiday.jpg");
   assert.ok(fs.readFileSync(received).equals(fs.readFileSync(file)), "received file is identical");
   await alice.page.getByText(/^Saved to /).waitFor();
-  await shot(alice.page, "5-received");
+  await go(bob.page, "History");
+  await historyTab(bob.page, "Completed");
+  await bob.page.locator('[data-testid="transfer-out"][data-state="complete"]').waitFor({ timeout: 30000 });
+  await shot(alice.page, "05-history-light");
 
   // Background receiving: Alice closes her window; the app stays in the
   // tray, gets Bob's next offer and says so with a notification.
   await alice.app.evaluate(({ Notification, BrowserWindow }) => {
-    // Record notifications instead of showing them.
     const shown = (globalThis.__notifications = []);
     Notification.isSupported = () => true;
     Notification.prototype.show = function () { shown.push(this.title); };
@@ -180,9 +210,7 @@ test("ui: two devices pair with an invite link and send a file", { timeout: 1800
 
   const file2 = path.join(tmp, "notes.txt");
   fs.writeFileSync(file2, "sent while Alice's window was closed");
-  await pickWillReturn(bob.app, [file2]);
-  await tab(bob.page, "Contacts");
-  await bob.page.getByTestId("contact-Alice").getByRole("button", { name: "Send files" }).click();
+  await sendFiles(bob, "Alice", [file2]);
   for (let i = 0; !(await aliceNotifications()).some((t) => t.startsWith("Bob wants to send you “notes.txt”")); i++) {
     assert.ok(i < 100, `no offer notification; got ${JSON.stringify(await aliceNotifications())}`);
     await new Promise((r) => setTimeout(r, 100));
@@ -192,9 +220,12 @@ test("ui: two devices pair with an invite link and send a file", { timeout: 1800
   // Clicking the notification (or the tray icon) brings the window back.
   await alice.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show());
   await alice.page.getByRole("region", { name: "Offer from Bob" }).getByRole("button", { name: "Accept" }).click();
-  await bob.page.locator('[data-testid="transfer-out"][data-state="complete"]').first().waitFor({ timeout: 30000 });
-  await new Promise((r) => setTimeout(r, 300));
-  assert.equal(fs.readFileSync(path.join(alice.home, "Downloads", "PeerPayload", "notes.txt"), "utf8"), "sent while Alice's window was closed");
+  const notes = path.join(alice.home, "Downloads", "PeerPayload", "notes.txt");
+  for (let i = 0; !fs.existsSync(notes); i++) {
+    assert.ok(i < 300, "notes.txt arrived");
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.equal(fs.readFileSync(notes, "utf8"), "sent while Alice's window was closed");
 
   // Launching again with the same data folder (a second click on the
   // shortcut) doesn't start a second copy: it exits and the running one
@@ -209,9 +240,58 @@ test("ui: two devices pair with an invite link and send a file", { timeout: 1800
   }
 
   // A third offer, declined.
-  await tab(bob.page, "Contacts");
-  await bob.page.getByTestId("contact-Alice").getByRole("button", { name: "Send files" }).click();
+  const file3 = path.join(tmp, "draft.txt");
+  fs.writeFileSync(file3, "not wanted");
+  await sendFiles(bob, "Alice", [file3]);
   await alice.page.getByRole("region", { name: "Offer from Bob" }).getByRole("button", { name: "Decline" }).click();
+  await go(bob.page, "History");
+  await historyTab(bob.page, "Failed");
   await bob.page.getByText("Alice declined").waitFor({ timeout: 15000 });
-  await shot(bob.page, "6-declined");
+
+  // Pause and resume from the transfer rows: Alice pauses a big transfer
+  // mid-way, Bob resumes it; it finishes from where it stopped.
+  const big = path.join(tmp, "archive.bin");
+  {
+    const fd = fs.openSync(big, "w");
+    const block = crypto.randomBytes(4 * 1024 * 1024);
+    for (let i = 0; i < 256; i++) fs.writeSync(fd, block); // 1 GiB
+    fs.closeSync(fd);
+  }
+  await sendFiles(bob, "Alice", [big]);
+  await alice.page.getByRole("region", { name: "Offer from Bob" }).getByRole("button", { name: "Accept" }).click();
+  const aliceRow = alice.page.locator('[data-testid="transfer-in"][data-state="receiving"]');
+  await aliceRow.getByText(/\/s/).waitFor({ timeout: 30000 }); // a measured speed, e.g. "120.3 MB/s"
+  await shot(alice.page, "11-transfer-running-light");
+  await aliceRow.getByRole("button", { name: "Pause" }).click();
+  await alice.page.locator('[data-testid="transfer-in"][data-state="interrupted"]').getByText("Paused").first().waitFor({ timeout: 15000 });
+  await go(bob.page, "History");
+  await historyTab(bob.page, "Active");
+  const bobPaused = bob.page.locator('[data-testid="transfer-out"][data-state="interrupted"]');
+  await bobPaused.getByText("paused by Alice").waitFor({ timeout: 15000 });
+  await shot(bob.page, "12-paused-light");
+  await bobPaused.getByRole("button", { name: "Resume" }).click();
+  const bigReceived = path.join(alice.home, "Downloads", "PeerPayload", "archive.bin");
+  for (let i = 0; !fs.existsSync(bigReceived); i++) {
+    assert.ok(i < 600, "archive.bin arrived after resuming");
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const digest = (p) => crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex");
+  assert.equal(digest(bigReceived), digest(big), "resumed transfer is identical");
+
+  // The same screens in the dark theme (set from Settings).
+  if (shots) {
+    await go(alice.page, "Settings");
+    await alice.page.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name: "General" }).click();
+    await alice.page.getByLabel("Theme").selectOption("dark");
+    await shot(alice.page, "06-settings-dark");
+    await go(alice.page, "Devices");
+    await shot(alice.page, "07-devices-dark");
+    await go(alice.page, "History");
+    await historyTab(alice.page, "Completed");
+    await shot(alice.page, "08-history-dark");
+    await go(alice.page, "Transfer");
+    await shot(alice.page, "09-transfer-dark");
+    await go(bob.page, "Settings");
+    await shot(bob.page, "10-settings-light");
+  }
 });

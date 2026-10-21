@@ -1,21 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
-import { ThemeToggle } from "@peerpayload/ui";
+import { X } from "lucide-react";
 
-import Setup from "./components/Setup.jsx";
-import Contacts from "./components/Contacts.jsx";
-import Transfers, { IncomingOffers } from "./components/Transfers.jsx";
-import Settings from "./components/Settings.jsx";
-import { Button } from "./components/ui.jsx";
+import Sidebar from "./components/Sidebar.jsx";
+import OfferBanner from "./components/OfferBanner.jsx";
+import Setup from "./pages/Setup.jsx";
+import TransferPage from "./pages/TransferPage.jsx";
+import DevicesPage from "./pages/DevicesPage.jsx";
+import HistoryPage from "./pages/HistoryPage.jsx";
+import SettingsPage from "./pages/SettingsPage.jsx";
+import useRates from "./lib/useRates";
 
-const TABS = ["Contacts", "Transfers", "Settings"];
-
-// One window, three tabs. Everything shown comes from the main process:
-// fetched once on load, then kept current by its events.
+// The window: sidebar + one page. Everything shown comes from the main
+// process, fetched on load and then kept current by its events.
 export default function App() {
   const [status, setStatus] = useState(null);
   const [contacts, setContacts] = useState([]);
   const [transfers, setTransfers] = useState(new Map());
-  const [tab, setTab] = useState("Contacts");
+  const [page, setPage] = useState("transfer");
+  const [settingsSection, setSettingsSection] = useState("general");
+  const [historyTab, setHistoryTab] = useState("active");
   const [notice, setNotice] = useState(null);
 
   const refresh = useCallback(async () => {
@@ -44,86 +47,71 @@ export default function App() {
     });
   }, [refresh]);
 
+  // Clearing removes records without per-record events: reload the list.
+  const clearFinished = useCallback(async () => {
+    await window.connect.clearFinished();
+    setTransfers(new Map((await window.connect.transfers()).map((t) => [t.transferId, t])));
+  }, []);
+
+  // A notice clears itself after a while; it can also be dismissed.
+  useEffect(() => {
+    if (!notice)
+      return undefined;
+
+    const timer = setTimeout(() => setNotice(null), 10000);
+
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  const transferList = [...transfers.values()].sort((a, b) => b.createdAt - a.createdAt);
+  const rates = useRates(transferList);
+
   if (!status)
-    return <Centered>Loading…</Centered>;
+    return <div className="flex h-screen items-center justify-center text-sm text-[var(--color-ink-muted)]">Loading…</div>;
 
   if (!status.hasIdentity)
     return <Setup onDone={refresh} />;
 
-  const transferList = [...transfers.values()].sort((a, b) => b.createdAt - a.createdAt);
   const offers = transferList.filter((t) => t.direction === "in" && t.state === "offered");
+  const go = (to, section) => {
+    if (section)
+      setSettingsSection(section);
+
+    setPage(to);
+  };
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold">PeerPayload Connect</h1>
-          <p className="text-xs" style={{ color: "var(--color-ink-muted)" }}>
-            {status.name} · device {status.fingerprint.slice(0, 8)}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <ConnectionDot status={status} />
-          <ThemeToggle />
-        </div>
-      </header>
+    <div className="flex h-screen overflow-hidden">
+      <Sidebar page={page} onNavigate={go} status={status} badges={{ history: offers.length || 0 }} />
 
-      {notice && (
-        <div className="mt-4 flex items-center justify-between rounded-lg border p-3 text-sm" style={{ borderColor: "var(--color-good)" }} role="status">
-          <span>{notice}</span>
-          <Button variant="quiet" onClick={() => setNotice(null)}>Dismiss</Button>
-        </div>
-      )}
-
-      <IncomingOffers offers={offers} onAnswered={() => setTab("Transfers")} />
-
-      <nav className="mt-6 flex gap-1 border-b" style={{ borderColor: "var(--color-border)" }} aria-label="Sections">
-        {TABS.map((name) => (
-          <button
-            key={name}
-            type="button"
-            onClick={() => setTab(name)}
-            aria-current={tab === name ? "page" : undefined}
-            className="-mb-px border-b-2 px-3 py-2 text-sm"
-            style={{
-              borderColor: tab === name ? "var(--color-accent)" : "transparent",
-              color: tab === name ? "var(--color-ink)" : "var(--color-ink-secondary)",
+      <div className="flex min-w-0 flex-1 flex-col">
+        {notice && (
+          <div className="flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-2.5 text-sm" role="status">
+            <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--color-good)]">Paired</span>
+            <span className="flex-1">{notice}</span>
+            <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss" className="text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]">
+              <X size={16} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+        {offers.map((offer) => (
+          <OfferBanner
+            key={offer.transferId}
+            offer={offer}
+            onAccepted={() => {
+              setHistoryTab("active");
+              setPage("history");
             }}
-          >
-            {name}
-            {name === "Transfers" && offers.length > 0 && ` (${offers.length})`}
-          </button>
+          />
         ))}
-      </nav>
 
-      <main className="mt-6">
-        {tab === "Contacts" && <Contacts contacts={contacts} status={status} onSent={() => setTab("Transfers")} />}
-        {tab === "Transfers" && <Transfers transfers={transferList} />}
-        {tab === "Settings" && <Settings status={status} onSaved={refresh} />}
-      </main>
-    </div>
-  );
-}
-
-function ConnectionDot({ status }) {
-  const { label, color } = !status.mailboxUrl
-    ? { label: "No mailbox set", color: "var(--color-warning)" }
-    : status.connected
-      ? { label: "Connected", color: "var(--color-good)" }
-      : { label: "Connecting…", color: "var(--color-ink-muted)" };
-
-  return (
-    <span className="inline-flex items-center gap-1.5 text-xs" style={{ color: "var(--color-ink-secondary)" }} data-testid="connection">
-      <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} aria-hidden="true" />
-      {label}
-    </span>
-  );
-}
-
-function Centered({ children }) {
-  return (
-    <div className="flex h-screen items-center justify-center text-sm" style={{ color: "var(--color-ink-muted)" }}>
-      {children}
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          {page === "transfer" && <TransferPage contacts={contacts} transfers={transferList} rates={rates} onNavigate={go} />}
+          {page === "devices" && <DevicesPage contacts={contacts} transfers={transferList} status={status} onNavigate={go} />}
+          {page === "history" && <HistoryPage transfers={transferList} rates={rates} tab={historyTab} onTab={setHistoryTab} onClearFinished={clearFinished} />}
+          {page === "settings" && <SettingsPage status={status} section={settingsSection} onSection={setSettingsSection} onSaved={refresh} />}
+        </main>
+      </div>
     </div>
   );
 }

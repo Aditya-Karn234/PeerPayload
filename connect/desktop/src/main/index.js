@@ -1,4 +1,5 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, Notification, shell } from "electron";
+import fs from "fs";
 import path from "path";
 import QRCode from "qrcode";
 import { createConnectNode } from "connect-core";
@@ -100,10 +101,15 @@ function startNode() {
 
 function createWindow({ hidden }) {
   mainWindow = new BrowserWindow({
-    width: 1000,
-    height: 720,
+    width: 1120,
+    height: 760,
+    minWidth: 860,
+    minHeight: 600,
     title: "PeerPayload Connect",
+    icon: path.join(__dirname, "../../resources/icon.png"),
     show: !hidden,
+    // Matches the page color, so there's no white flash before it paints.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#151615" : "#f4f1e8",
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,
@@ -194,6 +200,58 @@ function registerIpcHandlers() {
   ipcMain.handle("resume", (event, transferId) => node.resume(transferId));
   ipcMain.handle("clear-finished", () => node.clearFinished());
   ipcMain.handle("transfers", () => node.transfers());
+
+  // Name, size and file count of picked or dropped items, for the list
+  // shown before sending. Missing items are reported, not thrown.
+  ipcMain.handle("describe-paths", (event, paths) =>
+    paths.map((p) => {
+      try {
+        const stat = fs.statSync(p);
+
+        if (!stat.isDirectory())
+          return { path: p, name: path.basename(p), size: stat.size, files: 1, folder: false };
+
+        let size = 0;
+        let files = 0;
+        const walk = (dir) => {
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+
+            if (entry.isDirectory())
+              walk(full);
+            else {
+              files++;
+              size += fs.statSync(full).size;
+            }
+          }
+        };
+
+        walk(p);
+
+        return { path: p, name: path.basename(p), size, files, folder: true };
+      } catch {
+        return { path: p, name: path.basename(p), missing: true };
+      }
+    }),
+  );
+
+  ipcMain.handle("app-info", () => ({
+    version: app.getVersion(),
+    packaged: app.isPackaged,
+    openAtLogin: app.isPackaged && app.getLoginItemSettings().openAtLogin,
+  }));
+
+  // Only for the installed app (in development it would register the bare
+  // Electron binary). Same setting as the tray menu's.
+  ipcMain.handle("set-open-at-login", (event, enabled) => {
+    if (!app.isPackaged)
+      throw new Error("Only available in the installed app");
+
+    app.setLoginItemSettings({ openAtLogin: Boolean(enabled), args: ["--hidden"] });
+    tray?.rebuild();
+
+    return app.getLoginItemSettings().openAtLogin;
+  });
 
   ipcMain.handle("copy", (event, text) => clipboard.writeText(String(text)));
   ipcMain.handle("open-downloads", () => shell.openPath(loadSettings().downloadDir));

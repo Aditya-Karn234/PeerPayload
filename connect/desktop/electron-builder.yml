@@ -4,10 +4,13 @@ appId: com.peerpayload.connect
 productName: PeerPayload Connect
 directories:
   output: dist
-  buildResources: build
+  # icon.png here becomes the installer/exe icon (not build/: that's
+  # git-ignored repo-wide).
+  buildResources: resources
 
 files:
   - out/**/*
+  - resources/*.png
   - package.json
 
 # The engine: sender/receiver move the bytes, ppkeygen creates the device

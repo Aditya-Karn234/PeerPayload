@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 // The window's only way to reach the main process: exactly these calls,
 // no raw ipcRenderer and no Node APIs (contextIsolation, nodeIntegration off).
@@ -24,6 +24,12 @@ contextBridge.exposeInMainWorld("connect", {
   resume: invoke("resume"),
   clearFinished: invoke("clear-finished"),
   transfers: invoke("transfers"),
+
+  describePaths: invoke("describe-paths"),
+  // A dropped File's real path on disk (Electron removed File.path).
+  pathForFile: (file) => webUtils.getPathForFile(file),
+  appInfo: invoke("app-info"),
+  setOpenAtLogin: invoke("set-open-at-login"),
 
   copy: invoke("copy"),
   openDownloads: invoke("open-downloads"),

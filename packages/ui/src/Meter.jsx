@@ -18,11 +18,13 @@ export default function Meter({ value, max, status }) {
         ? 100
         : 0;
 
-  const fill = FILL_BY_STATUS[status] || "var(--color-accent)";
+  // Active: the neutral progress color where the theme defines one (it
+  // keeps orange for actions), else the accent.
+  const fill = FILL_BY_STATUS[status] || "var(--color-progress, var(--color-accent))";
 
   return (
     <div
-      className="h-2 w-full overflow-hidden rounded-full"
+      className="h-1.5 w-full overflow-hidden rounded-[2px]"
       style={{ background: "var(--color-accent-track)" }}
       role="progressbar"
       aria-valuenow={Math.round(pct)}
@@ -30,7 +32,7 @@ export default function Meter({ value, max, status }) {
       aria-valuemax={100}
     >
       <div
-        className="h-full rounded-full transition-[width] duration-300 ease-out"
+        className="h-full rounded-[2px] transition-[width] duration-300 ease-out"
         style={{ width: `${pct}%`, background: fill }}
       />
     </div>
