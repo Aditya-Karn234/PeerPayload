@@ -91,7 +91,7 @@ test("mailbox: offline envelopes wait, are redelivered until acknowledged, then 
   await until(() => box.envelopes.length === 1);
   assert.equal(box.envelopes[0].id, e2.id, "only the unacknowledged one comes back");
   box.send(JSON.stringify({ type: "ack", ids: [e2.id] }));
-  await until(() => !mailbox.queues.has(bob.fingerprint));
+  await until(() => mailbox.store.size(bob.fingerprint) === 0);
   box.close();
 });
 

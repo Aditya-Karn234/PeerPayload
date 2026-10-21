@@ -3,6 +3,8 @@ const { WebSocketServer } = require("ws");
 
 const { verifyEnvelopeSignature, verifyInboxToken } = require("peerpayload-protocol");
 
+const { memoryStore, sqliteStore } = require("./store");
+
 const verifyEnvelope = (e) => {
   try {
     verifyEnvelopeSignature(e);
@@ -28,8 +30,9 @@ const verifyEnvelope = (e) => {
 //        client -> server  {"type":"ack","ids":["..."]}   deletes them
 //   GET  /health
 //
-// Storage is in memory: a restart drops undelivered envelopes. Fine while
-// both sides are usually online; a persistent store comes later.
+// Storage (store.js): in memory by default; with MAILBOX_DB=<file> waiting
+// envelopes are kept in SQLite and survive restarts (phones especially
+// are offline for long stretches).
 
 function createMailbox({
   ttlMs = 7 * 24 * 60 * 60 * 1000,
@@ -40,10 +43,9 @@ function createMailbox({
   maxBodyBytes = 64 * 1024,
   trustProxy = false,
   sweepIntervalMs = 60_000,
+  store = memoryStore(),
   log = console,
 } = {}) {
-  const queues = new Map(); // fp -> [{ id, envelope, at }]
-  const recentIds = new Map(); // `${to}:${id}` -> at   (duplicate suppression)
   const senderWindows = new Map(); // fp -> { start, count }
   const inboxes = new Map(); // fp -> ws
   const socketsPerIp = new Map();
@@ -77,17 +79,14 @@ function createMailbox({
   function accept(envelope, now) {
     const key = `${envelope.to}:${envelope.id}`;
 
-    if (recentIds.has(key))
+    if (store.seen(key))
       return { status: 202, body: { id: envelope.id, duplicate: true } };
 
-    const queue = queues.get(envelope.to) || [];
-
-    if (queue.length >= maxQueuePerDevice)
+    if (store.size(envelope.to) >= maxQueuePerDevice)
       return { status: 507, body: { error: "recipient's mailbox is full" } };
 
-    queue.push({ id: envelope.id, envelope, at: now });
-    queues.set(envelope.to, queue);
-    recentIds.set(key, now);
+    store.add(envelope.to, envelope.id, envelope, now);
+    store.markSeen(key, now);
     stats.accepted++;
     push(inboxes.get(envelope.to), envelope);
 
@@ -96,7 +95,7 @@ function createMailbox({
 
   const server = http.createServer((req, res) => {
     if (req.method === "GET" && req.url === "/health")
-      return json(res, 200, { ok: true, inboxes: inboxes.size, queued: [...queues.values()].reduce((n, q) => n + q.length, 0) });
+      return json(res, 200, { ok: true, inboxes: inboxes.size, queued: store.total() });
 
     if (req.method !== "POST" || req.url !== "/v1/messages")
       return json(res, 404, { error: "not found" });
@@ -210,7 +209,7 @@ function createMailbox({
     ws.isAlive = true;
     ws.on("pong", () => (ws.isAlive = true));
 
-    for (const item of queues.get(fp) || [])
+    for (const item of store.list(fp))
       push(ws, item.envelope);
 
     ws.on("message", (data, isBinary) => {
@@ -226,16 +225,9 @@ function createMailbox({
       }
 
       if (msg?.type === "ack" && Array.isArray(msg.ids)) {
-        const ids = new Set(msg.ids.filter((x) => typeof x === "string"));
-        const queue = queues.get(fp) || [];
-        const kept = queue.filter((item) => !ids.has(item.id));
+        const ids = new Set(msg.ids.filter((x) => typeof x === "string").slice(0, 1000));
 
-        stats.delivered += queue.length - kept.length;
-
-        if (kept.length)
-          queues.set(fp, kept);
-        else
-          queues.delete(fp);
+        stats.delivered += store.remove(fp, ids);
       }
     });
 
@@ -258,18 +250,7 @@ function createMailbox({
   const sweeper = setInterval(() => {
     const now = Date.now();
 
-    for (const [fp, queue] of queues) {
-      const kept = queue.filter((item) => now - item.at < ttlMs);
-
-      if (kept.length)
-        queues.set(fp, kept);
-      else
-        queues.delete(fp);
-    }
-
-    for (const [key, at] of recentIds)
-      if (now - at >= ttlMs)
-        recentIds.delete(key);
+    store.expire(now - ttlMs);
 
     for (const [fp, w] of senderWindows)
       if (now - w.start >= 60_000)
@@ -291,7 +272,7 @@ function createMailbox({
   return {
     server,
     stats,
-    queues,
+    store,
     listen(port, host) {
       return new Promise((resolve) => server.listen(port, host, () => resolve(server.address().port)));
     },
@@ -301,7 +282,7 @@ function createMailbox({
       for (const ws of wss.clients)
         ws.terminate();
 
-      const closed = new Promise((resolve) => server.close(() => resolve()));
+      const closed = new Promise((resolve) => server.close(() => resolve())).then(() => store.close());
 
       server.closeAllConnections();
 
@@ -313,10 +294,14 @@ function createMailbox({
 module.exports = { createMailbox };
 
 if (require.main === module) {
+  const dbFile = process.env.MAILBOX_DB;
   const mailbox = createMailbox({
     trustProxy: process.env.TRUST_PROXY === "1",
     maxSocketsPerIp: Number(process.env.MAX_SOCKETS_PER_IP) || 20,
+    store: dbFile ? sqliteStore(dbFile) : memoryStore(),
   });
+
+  console.log(dbFile ? `Mailbox storage: SQLite at ${dbFile}` : "Mailbox storage: memory (set MAILBOX_DB to keep envelopes across restarts)");
 
   mailbox.listen(Number(process.env.PORT) || 4300).then((p) => console.log(`Mailbox listening on port ${p}`));
 }
