@@ -26,7 +26,9 @@ program
   .description("send a file or folder to a colleague")
   .argument("<path>", "file or directory to send")
   .requiredOption("--to <username>", "recipient username")
-  .option("--chunk-size <bytes>", "engine chunk size in bytes (4096-8388608)")
+  // 1 MiB: several times faster than the engine's 64 KiB default on a fast
+  // network (fewer per-chunk acks to wait on).
+  .option("--chunk-size <bytes>", "engine chunk size in bytes (4096-8388608)", "1048576")
   .option("--json", "machine-readable output")
   .action(sendCommand);
 

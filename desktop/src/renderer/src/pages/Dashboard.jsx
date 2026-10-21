@@ -6,10 +6,15 @@ const POLL_MS = 3000;
 const DIRECTORY_POLL_MS = 5000;
 const ACTIVE_STATUSES = new Set(["pending", "accepted", "in_progress"]);
 
+// 1 MiB by default: with the engine's own 64 KiB default most of the time
+// goes to waiting on per-chunk acks (12-17 MiB/s vs ~100+ MiB/s at 1 MiB
+// on a fast network). Receivers of any version accept any of these.
+const DEFAULT_CHUNK_SIZE = 1024 * 1024;
+
 const CHUNK_SIZE_OPTIONS = [
-  { label: "Default (64 KiB)", value: "" },
+  { label: "64 KiB", value: 64 * 1024 },
   { label: "256 KiB", value: 256 * 1024 },
-  { label: "1 MiB", value: 1024 * 1024 },
+  { label: "Default (1 MiB)", value: DEFAULT_CHUNK_SIZE },
   { label: "4 MiB", value: 4 * 1024 * 1024 },
   { label: "8 MiB (fastest, max)", value: 8 * 1024 * 1024 },
 ];
@@ -21,7 +26,7 @@ export default function Dashboard({ user, onLogout }) {
 
   const [filePath, setFilePath] = useState("");
   const [toUsername, setToUsername] = useState("");
-  const [chunkSize, setChunkSize] = useState("");
+  const [chunkSize, setChunkSize] = useState(DEFAULT_CHUNK_SIZE);
   const [sendError, setSendError] = useState(null);
   const [sendState, setSendState] = useState(null); // { phase, event }
 
