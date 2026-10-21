@@ -28,7 +28,6 @@ export default function TransferPage({ d, onShowHistory }) {
   const [chunkSize, setChunkSize] = useState(DEFAULT_CHUNK_SIZE);
   const [dragging, setDragging] = useState(false);
   const [dropNote, setDropNote] = useState(null);
-  const [sentTo, setSentTo] = useState(""); // recipient of the send shown below
 
   const sending = Boolean(d.sendState && d.sendState.phase !== "done");
   const colleagues = [...d.directory].sort((a, b) => Number(b.online) - Number(a.online) || a.username.localeCompare(b.username));
@@ -63,8 +62,6 @@ export default function TransferPage({ d, onShowHistory }) {
   }
 
   async function start() {
-    setSentTo(toUsername);
-
     if (await d.send(filePath, toUsername, chunkSize)) {
       setFilePath("");
       setToUsername("");
@@ -221,7 +218,7 @@ export default function TransferPage({ d, onShowHistory }) {
             </p>
           ) : (
             <div className="mt-1 border-b border-[var(--color-border)]">
-              <LiveTransfer direction="out" peer={sentTo} state={d.sendState} progress={d.progress[d.sendState.transferId]} testId="send" />
+              <LiveTransfer direction="out" peer={d.sentTo} state={d.sendState} progress={d.progress[d.sendState.transferId]} testId="send" />
             </div>
           )}
         </section>
