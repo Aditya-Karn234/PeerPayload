@@ -1,0 +1,7 @@
+.gradle/
+build/
+local.properties
+# Built by engine/build-engine.sh
+app/src/main/jniLibs/
+hs_err_pid*.log
+replay_pid*.log

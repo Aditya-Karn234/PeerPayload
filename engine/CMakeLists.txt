@@ -36,6 +36,14 @@ if(WIN32)
     # Same reasoning as the executables: no MinGW runtime DLLs needed
     # next to peerpayload.dll (OpenSSL is linked statically via shared/).
     target_link_options(peerpayload PRIVATE -static)
+elseif(ANDROID)
+    # The NDK links its C++ runtime statically (ANDROID_STL=c++_static, set
+    # by connect/android/engine/build-engine.sh), so the .so is self-contained.
+    # That script also passes the app's JNI bridge, built into the same .so.
+    set(PEERPAYLOAD_JNI_SOURCES "" CACHE STRING "JNI bridge sources for the Android build")
+    if(PEERPAYLOAD_JNI_SOURCES)
+        target_sources(peerpayload PRIVATE ${PEERPAYLOAD_JNI_SOURCES})
+    endif()
 else()
     target_link_options(peerpayload PRIVATE -static-libgcc -static-libstdc++)
 endif()
