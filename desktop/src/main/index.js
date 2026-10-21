@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, shell, BrowserWindow, ipcMain, dialog, nativeTheme } from "electron";
 import path from "path";
 
 import { getApiClient, getTokenStore } from "./apiClient";
@@ -11,6 +11,8 @@ import { initAutoUpdater } from "./autoUpdater";
 
 let mainWindow = null;
 let isQuitting = false;
+// Live connection to the backend (socket.io), shown in the sidebar.
+let serverConnected = false;
 
 function sendToRenderer(channel, payload) {
   mainWindow?.webContents.send(channel, payload);
@@ -35,8 +37,14 @@ async function exitSession() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1000,
-    height: 700,
+    width: 1120,
+    height: 760,
+    minWidth: 860,
+    minHeight: 600,
+    title: "PeerPayload Enterprise",
+    icon: path.join(__dirname, "../../resources/icon.png"),
+    // Matches the page color, so there's no white flash before it paints.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#151615" : "#f4f1e8",
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,
@@ -125,6 +133,9 @@ function registerIpcHandlers() {
   ipcMain.handle("reject-incoming", (event, transferId) => receiveListener.rejectIncoming(transferId));
 
   ipcMain.handle("get-auto-accept", () => receiveListener.getAutoAccept());
+  ipcMain.handle("connection-status", () => ({ connected: serverConnected }));
+  ipcMain.handle("app-info", () => ({ version: app.getVersion(), downloadsDir: receiveListener.DOWNLOADS_DIR }));
+  ipcMain.handle("open-downloads", () => shell.openPath(receiveListener.DOWNLOADS_DIR));
   ipcMain.handle("set-auto-accept", (event, value) => receiveListener.setAutoAccept(value));
 }
 
@@ -138,6 +149,15 @@ app.whenReady().then(() => {
   };
 
   socketBus.events.on("session-revoked", forceLogout);
+
+  socketBus.events.on("connected", () => {
+    serverConnected = true;
+    sendToRenderer("connection", { connected: true });
+  });
+  socketBus.events.on("disconnected", () => {
+    serverConnected = false;
+    sendToRenderer("connection", { connected: false });
+  });
 
   // The server refused the socket's token: the session expired or was
   // revoked while this app wasn't connected to hear the push about it.

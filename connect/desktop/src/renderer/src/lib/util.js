@@ -49,15 +49,4 @@ export function tabOf(t) {
   return "active";
 }
 
-// Time left, readable: "42 s", "3 min 20 s", "1 h 5 min".
-export function formatRemaining(seconds) {
-  const s = Math.max(1, Math.round(seconds));
-
-  if (s < 60)
-    return `${s} s`;
-
-  if (s < 3600)
-    return `${Math.floor(s / 60)} min${s % 60 ? ` ${s % 60} s` : ""}`;
-
-  return `${Math.floor(s / 3600)} h${Math.floor((s % 3600) / 60) ? ` ${Math.floor((s % 3600) / 60)} min` : ""}`;
-}
+export { formatRemaining } from "@peerpayload/ui";

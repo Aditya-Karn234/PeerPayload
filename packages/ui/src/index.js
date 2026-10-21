@@ -6,4 +6,7 @@ export { default as TransferTable } from "./TransferTable";
 export { RavenMark, Wordmark } from "./Brand";
 export { Button, IconButton, SectionLabel, Mono, Field, TextInput, Select, Toggle, Tabs } from "./Controls";
 export { getThemePreference, setThemePreference, applyStoredTheme } from "./theme";
+export { default as SidebarNav, StatusLine } from "./SidebarNav";
+export { default as useRates, formatRemaining } from "./useRates";
+export { createProgressTracker } from "./progress";
 export { formatBytes, formatRelativeTime, formatDuration } from "./format";

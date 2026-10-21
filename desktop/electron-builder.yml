@@ -6,10 +6,13 @@ appId: com.peerpayload.desktop
 productName: PeerPayload Enterprise
 directories:
   output: dist
-  buildResources: build
+  # icon.png here becomes the installer/exe icon (not build/: that's
+  # git-ignored repo-wide).
+  buildResources: resources
 
 files:
   - out/**/*
+  - resources/*.png
   - package.json
 
 # The C++ transfer engine binaries — sender.exe/receiver.exe are what

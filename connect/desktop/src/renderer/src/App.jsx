@@ -8,7 +8,7 @@ import TransferPage from "./pages/TransferPage.jsx";
 import DevicesPage from "./pages/DevicesPage.jsx";
 import HistoryPage from "./pages/HistoryPage.jsx";
 import SettingsPage from "./pages/SettingsPage.jsx";
-import useRates from "./lib/useRates";
+import { useRates } from "@peerpayload/ui";
 
 // The window: sidebar + one page. Everything shown comes from the main
 // process, fetched on load and then kept current by its events.
@@ -64,7 +64,9 @@ export default function App() {
   }, [notice]);
 
   const transferList = [...transfers.values()].sort((a, b) => b.createdAt - a.createdAt);
-  const rates = useRates(transferList);
+  const rates = useRates(
+    transferList.map((t) => ({ id: t.transferId, running: t.state === "sending" || t.state === "receiving", bytes: t.progress?.bytes, total: t.totalBytes })),
+  );
 
   if (!status)
     return <div className="flex h-screen items-center justify-center text-sm text-[var(--color-ink-muted)]">Loading…</div>;
