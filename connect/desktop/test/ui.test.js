@@ -54,6 +54,9 @@ async function launch(name, env = {}) {
     // Inherited from editors' terminals; it makes Electron run as plain Node.
     ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "ELECTRON_RUN_AS_NODE" && !k.startsWith("PEERPAYLOAD_"))),
     CONNECT_USER_DATA: path.join(profile, "userdata"),
+    // Never the hosted mailbox/relay: no default unless a test sets one.
+    PEERPAYLOAD_MAILBOX: "",
+    PEERPAYLOAD_RELAY: "",
     HOME: home,
     USERPROFILE: home,
     ...env,

@@ -32,15 +32,20 @@ export const keygenPath = enginePath("ENGINE_KEYGEN_PATH", "engine", "ppkeygen")
 export const identityDir = () => path.join(app.getPath("userData"), "device");
 
 // Settings: where to collect messages (mailbox), the relay for transfers
-// that can't go direct, and where received files go. Neither service is
-// run for the public yet, so both start empty unless set by environment
-// (PEERPAYLOAD_MAILBOX / PEERPAYLOAD_RELAY) or in the app.
+// that can't go direct, and where received files go. The defaults are the
+// hosted services (connect/render.yaml); PEERPAYLOAD_MAILBOX /
+// PEERPAYLOAD_RELAY override them, and set to "" mean none (tests use this
+// so they never touch the hosted services). Users can change both in
+// Settings.
+const DEFAULT_MAILBOX = "https://peerpayload-connect-mailbox.onrender.com";
+const DEFAULT_RELAY = "wss://peerpayload-connect-relay.onrender.com/v1/connect";
+
 const settingsFile = () => path.join(app.getPath("userData"), "settings.json");
 
 function defaults() {
   return {
-    mailboxUrl: process.env.PEERPAYLOAD_MAILBOX || null,
-    relayUrl: process.env.PEERPAYLOAD_RELAY || null,
+    mailboxUrl: (process.env.PEERPAYLOAD_MAILBOX ?? DEFAULT_MAILBOX) || null,
+    relayUrl: (process.env.PEERPAYLOAD_RELAY ?? DEFAULT_RELAY) || null,
     downloadDir: path.join(app.getPath("downloads"), "PeerPayload"),
   };
 }

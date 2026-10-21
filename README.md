@@ -158,10 +158,20 @@ The app runs in the tray: closing the window keeps it receiving, offers
 and finished transfers show as notifications, and it can start when you
 sign in (tray menu, installed app only).
 
-Not done yet: no mailbox or relay is deployed for public use (set your own
-in Settings); transfer history is kept only while the app runs; the
-mailbox keeps undelivered messages in memory only; no messaging,
-multi-device or revocation yet; Android not started.
+Hosted services (Render free plan, `connect/render.yaml`, from the
+`connect-foundation` branch) are the app's defaults; either can be
+changed in Settings:
+
+- mailbox: `https://peerpayload-connect-mailbox.onrender.com`
+- relay: `wss://peerpayload-connect-relay.onrender.com/v1/connect`
+
+On the free plan they sleep after 15 minutes idle (about a minute to
+wake), relayed transfers are slow (about 0.4 MiB/s measured), and the
+mailbox keeps undelivered messages in memory only, so a restart drops
+them.
+
+Not done yet: transfer history is kept only while the app runs; no
+messaging, multi-device or revocation yet; Android not started.
 
 ## How the engine works
 
