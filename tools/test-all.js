@@ -7,9 +7,12 @@
 //   node tools/test-all.js                  build + all suites
 //   node tools/test-all.js --no-build       use the existing build/
 //   node tools/test-all.js --only relay,connect-core
+//   node tools/test-all.js --ui             also the opt-in UI suites
 //   node tools/test-all.js --list           suite names
 //
 // No dependencies of its own. Adding a suite = one line in SUITES.
+// optIn suites (real app windows: need a display, and Electron's download)
+// run only with --ui or when named in --only.
 
 const { spawnSync } = require("child_process");
 const fs = require("fs");
@@ -36,14 +39,16 @@ const SUITES = [
   { name: "relay", cwd: "relay", cmd: ["node", "--test", TEST_TIMEOUT, "test/*.test.js"] },
   { name: "connect-mailbox", cwd: "connect/mailbox", cmd: ["node", "--test", TEST_TIMEOUT, "test/*.test.js"] },
   { name: "connect-core", cwd: "connect/core", cmd: ["node", "--test", TEST_TIMEOUT, "test/*.test.js"] },
+  { name: "connect-desktop-ui", cwd: "connect/desktop", cmd: "npm run test:ui", optIn: true, packages: ["connect/desktop"] },
 ];
 
 function parseArgs(argv) {
-  const opts = { build: true, only: null, list: false };
+  const opts = { build: true, only: null, list: false, ui: false };
 
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--no-build") opts.build = false;
     else if (argv[i] === "--list") opts.list = true;
+    else if (argv[i] === "--ui") opts.ui = true;
     else if (argv[i] === "--only") opts.only = (argv[++i] || "").split(",").filter(Boolean);
     else {
       console.error(`unknown argument: ${argv[i]}`);
@@ -107,8 +112,8 @@ function depsUpToDate(pkg) {
   }
 }
 
-function installNodeDeps() {
-  for (const pkg of NODE_PACKAGES) {
+function installNodeDeps(packages) {
+  for (const pkg of packages) {
     if (depsUpToDate(pkg))
       continue;
 
@@ -127,7 +132,7 @@ function main() {
   const opts = parseArgs(process.argv.slice(2));
 
   if (opts.list) {
-    for (const s of SUITES) console.log(s.name);
+    for (const s of SUITES) console.log(`${s.name}${s.optIn ? " (opt-in)" : ""}`);
     return 0;
   }
 
@@ -138,19 +143,21 @@ function main() {
     return 2;
   }
 
+  const selected = SUITES.filter((s) => (opts.only ? opts.only.includes(s.name) : !s.optIn || opts.ui));
+
   if (opts.build && !buildEngine()) {
     console.error("\nengine build failed");
     return 1;
   }
 
-  if (!installNodeDeps()) {
+  if (!installNodeDeps([...NODE_PACKAGES, ...selected.flatMap((s) => s.packages ?? [])])) {
     console.error("\nnpm ci failed");
     return 1;
   }
 
   const results = [];
 
-  for (const suite of SUITES.filter((s) => !opts.only || opts.only.includes(s.name))) {
+  for (const suite of selected) {
     step(suite.name);
 
     const started = Date.now();

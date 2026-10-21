@@ -10,6 +10,22 @@ const { open } = require("./envelope");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Posts one envelope to a mailbox (any mailbox: contacts may use different
+// ones). Resolves with the mailbox's answer; throws with .status if refused.
+async function postEnvelope(url, envelope) {
+  const res = await fetch(`${url.replace(/\/+$/, "")}/v1/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(envelope),
+  });
+  const body = await res.json().catch(() => null);
+
+  if (!res.ok)
+    throw Object.assign(new Error(body?.error || `mailbox refused the envelope (${res.status})`), { status: res.status });
+
+  return body;
+}
+
 // onEnvelope(opened, raw) receives { from, id, ts, cert, payload } for each
 // envelope addressed to us that verifies and decrypts. It may be async; the
 // envelope is acknowledged (deleted from the mailbox) once it resolves. If
@@ -24,19 +40,7 @@ function createMailboxClient({ url, identity, onEnvelope, onStatus = () => {}, l
   let ws = null;
   let stopped = true;
 
-  async function send(envelope) {
-    const res = await fetch(`${base}/v1/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(envelope),
-    });
-    const body = await res.json().catch(() => null);
-
-    if (!res.ok)
-      throw Object.assign(new Error(body?.error || `mailbox refused the envelope (${res.status})`), { status: res.status });
-
-    return body;
-  }
+  const send = (envelope) => postEnvelope(base, envelope);
 
   function ack(ids) {
     if (ws && ws.readyState === WebSocket.OPEN && ids.length)
@@ -132,4 +136,4 @@ function createMailboxClient({ url, identity, onEnvelope, onStatus = () => {}, l
   };
 }
 
-module.exports = { issueInboxToken, createMailboxClient };
+module.exports = { issueInboxToken, postEnvelope, createMailboxClient };

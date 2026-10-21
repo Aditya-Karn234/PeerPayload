@@ -12,6 +12,8 @@ const { hashSecret } = require("./pairing");
 // status: "pending" — we opened their link and sent a pair request, no
 //                     answer yet (we already have their verified card);
 //         "paired"  — both sides hold each other's card.
+// mailbox: where the contact collects messages (from their invite link or
+// pair request); contacts may use different mailboxes.
 function openContacts(dir) {
   const file = path.join(dir, "contacts.json");
   let data = { contacts: {}, invites: {} };
@@ -26,7 +28,7 @@ function openContacts(dir) {
     fs.renameSync(tmp, file);
   }
 
-  const publicView = (c) => c && { fp: c.card.fp, name: c.card.name, status: c.status, addedAt: c.addedAt };
+  const publicView = (c) => c && { fp: c.card.fp, name: c.card.name, status: c.status, mailbox: c.mailbox ?? null, addedAt: c.addedAt };
 
   return {
     list() {
@@ -44,8 +46,9 @@ function openContacts(dir) {
       return entry ? verifyCard(entry.card) : null;
     },
 
-    // Adds or updates a contact from a card. Never downgrades "paired".
-    upsert(card, status) {
+    // Adds or updates a contact from a card. Never downgrades "paired";
+    // keeps the known mailbox unless a new one is given.
+    upsert(card, status, { mailbox } = {}) {
       verifyCard(card);
 
       const strip = ({ v, name, fp, cert, box }) => ({ v, name, fp, cert, box });
@@ -54,6 +57,7 @@ function openContacts(dir) {
       data.contacts[card.fp] = {
         card: strip(card),
         status: existing?.status === "paired" ? "paired" : status,
+        mailbox: mailbox ?? existing?.mailbox ?? null,
         addedAt: existing?.addedAt ?? new Date().toISOString(),
       };
       save();

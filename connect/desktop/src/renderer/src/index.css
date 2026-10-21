@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+/* Tailwind only generates classes it finds in scanned files, and the shared
+   components live outside this app's folder: scan them too, or their
+   classes (the progress Meter's h-2/h-full, ...) silently don't exist. */
+@source "../../../../../packages/ui/src";
+
+/*
+  Same palette as the web dashboard (frontend/src/index.css) — kept
+  identical so the desktop app and the web app read as the same product.
+*/
+@theme {
+  --color-surface: #fcfcfb;
+  --color-page: #f9f9f7;
+  --color-ink: #0b0b0b;
+  --color-ink-secondary: #52514e;
+  --color-ink-muted: #898781;
+  --color-gridline: #e1e0d9;
+  --color-border: rgba(11, 11, 11, 0.1);
+
+  --color-accent: #2a78d6;
+  --color-accent-track: #b7d3f6;
+
+  --color-good: #0ca30c;
+  --color-warning: #fab219;
+  --color-serious: #ec835a;
+  --color-critical: #d03b3b;
+}
+
+:root {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --color-surface: #1a1a19;
+    --color-page: #0d0d0d;
+    --color-ink: #ffffff;
+    --color-ink-secondary: #c3c2b7;
+    --color-ink-muted: #898781;
+    --color-gridline: #2c2c2a;
+    --color-border: rgba(255, 255, 255, 0.1);
+
+    --color-accent: #3987e5;
+    --color-accent-track: #184f95;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-surface: #1a1a19;
+  --color-page: #0d0d0d;
+  --color-ink: #ffffff;
+  --color-ink-secondary: #c3c2b7;
+  --color-ink-muted: #898781;
+  --color-gridline: #2c2c2a;
+  --color-border: rgba(255, 255, 255, 0.1);
+
+  --color-accent: #3987e5;
+  --color-accent-track: #184f95;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-page);
+  color: var(--color-ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* <select>'s dropdown popup is rendered by the OS/Chromium natively, not
+   by this page's regular layout — it doesn't reliably inherit dark-mode
+   colors from `color-scheme` alone once the control itself has a
+   transparent background (the `bg-transparent` utility class used on every
+   select in this app), so the popped-open option list can end up
+   unreadable (e.g. light text on a light native background) even though
+   the closed control looks fine against the page. Overriding explicitly
+   here, at higher specificity than the utility class, fixes both the
+   closed control and the open option list consistently in both themes. */
+select {
+  background-color: var(--color-surface) !important;
+  color: var(--color-ink) !important;
+}
+
+select option {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+}

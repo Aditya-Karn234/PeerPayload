@@ -23,5 +23,6 @@ backend/.env
 backend/dist/
 frontend/dist/
 desktop/dist/
+connect/desktop/dist/
 npm-debug.log*
 

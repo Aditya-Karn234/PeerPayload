@@ -1,0 +1,38 @@
+# Own appId and product name, so Connect installs and keeps its data
+# separately from PeerPayload Enterprise on the same machine.
+appId: com.peerpayload.connect
+productName: PeerPayload Connect
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+
+# The engine: sender/receiver move the bytes, ppkeygen creates the device
+# identity on first run. Read from resources/engine/ (src/main/config.js).
+extraResources:
+  - from: ../../build/sender/sender.exe
+    to: engine/sender.exe
+  - from: ../../build/receiver/receiver.exe
+    to: engine/receiver.exe
+  - from: ../../build/engine/ppkeygen.exe
+    to: engine/ppkeygen.exe
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Network

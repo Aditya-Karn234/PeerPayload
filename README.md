@@ -127,6 +127,38 @@ Point a client at it instead of the deployed backend with
 build and the CLI read this env var; the desktop app's `electron-builder`
 config bakes in the production URL for a packaged install instead).
 
+## PeerPayload Connect (in development)
+
+The consumer edition, being built alongside the organisation tool (which
+continues as PeerPayload Enterprise). No accounts and no backend: each
+device makes its own key on first run, people add each other with a
+one-time invite link or QR code, and files go device to device over mutual
+TLS with those keys, directly or through the relay.
+
+- `connect/core/`: everything a Connect device does (`createConnectNode`);
+  the desktop app is a UI over it, and the Android app will reuse it.
+- `connect/mailbox/`: store-and-forward for the small encrypted messages
+  (pairing, transfer offers) between devices that aren't both online. It
+  can't read them or forge them.
+- `connect/desktop/`: the Electron app.
+
+To try it on one machine with two devices:
+
+```sh
+cd connect/mailbox && npm start                      # mailbox on :4300
+cd connect/desktop && npm install && npm run build
+CONNECT_USER_DATA=/tmp/alice PEERPAYLOAD_MAILBOX=http://localhost:4300 npx electron .
+CONNECT_USER_DATA=/tmp/bob   PEERPAYLOAD_MAILBOX=http://localhost:4300 npx electron .
+```
+
+`npm run test:ui` in `connect/desktop` drives two app windows through
+setup, pairing and a transfer.
+
+Not done yet: no mailbox or relay is deployed for public use (set your own
+in Settings); transfer history is kept only while the app runs; closing the
+window quits (no tray), so it can't receive in the background; no
+messaging, multi-device or revocation yet; Android not started.
+
 ## How the engine works
 
 - **Resumable.** Interrupt a transfer (kill the process, lose the network)
@@ -388,6 +420,7 @@ relay/                 stateless WebSocket relay for transfers that can't connec
 protocol/              every wire format defined once (tickets, tokens, cards, envelopes, Connect messages)
 connect/core/          PeerPayload Connect client logic: identity, pairing, contacts, mailbox client, transfers
 connect/mailbox/       Connect's store-and-forward service for encrypted messages between devices
+connect/desktop/       Connect's Electron app
 render.yaml            Render Blueprint (backend + Postgres, relay)
 tools/                 test-all.js (npm test), benchmark harness, latency proxy, bench-log analysis
 docker-compose.yml     local Postgres + the old standalone backend/frontend pair (see frontend/ note)

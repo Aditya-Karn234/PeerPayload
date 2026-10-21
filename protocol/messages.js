@@ -23,6 +23,8 @@ const int = (min, max = Number.MAX_SAFE_INTEGER) => (v) => (Number.isSafeInteger
 
 const bool = (v) => (typeof v === "boolean" ? v : INVALID);
 
+const url = str(512, /^https?:\/\/[^\s]+$/);
+
 const ip = (v) => (typeof v === "string" && net.isIP(v) ? v : INVALID);
 
 const optional = (check) => (v) => (v === undefined ? undefined : check(v));
@@ -76,9 +78,10 @@ const MAX_OFFER_NAMES = 50;
 
 const MESSAGES = {
   // Pairing: the device that opened an invite link introduces itself to
-  // the inviter, proving it saw the link by returning the link's secret.
+  // the inviter, proving it saw the link by returning the link's secret,
+  // and says which mailbox to answer it at.
   "pair-request": {
-    fields: { secret: str(64, /^[A-Za-z0-9_-]+$/), card },
+    fields: { secret: str(64, /^[A-Za-z0-9_-]+$/), card, mailbox: optional(url) },
   },
   // The inviter accepted; both sides are now paired.
   "pair-accept": { fields: {} },
