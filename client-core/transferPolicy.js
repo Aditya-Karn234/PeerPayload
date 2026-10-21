@@ -43,11 +43,14 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Runs one engine process to completion. Resolves with its final event
 // (transfer_complete or transfer_failed); rejects if it exits without one,
-// which means it crashed or couldn't start at all.
-function runEngineOnce(exePath, args, onEvent) {
+// which means it crashed or couldn't start at all (or was killed).
+// onSpawn, if given, receives the process handle (for handle.kill()).
+function runEngineOnce(exePath, args, onEvent, onSpawn) {
   return new Promise((resolve, reject) => {
     const handle = spawnEngineProcess(exePath, args);
     let finalEvent = null;
+
+    onSpawn?.(handle);
 
     handle.on("event", (event) => {
       onEvent?.(event);

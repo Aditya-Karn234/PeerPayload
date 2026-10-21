@@ -1,0 +1,14 @@
+{
+  "name": "connect-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PeerPayload Connect client logic: device identity, contact cards, pairing links, end-to-end encrypted envelopes. No accounts, no server trust.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "client-core": "file:../../client-core",
+    "ws": "^8.18.0"
+  }
+}
