@@ -1,6 +1,8 @@
 package com.peerpayload.connect
 
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -60,9 +62,31 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun takeLink(intent: Intent?) {
-        val data = intent?.dataString ?: return
+        intent ?: return
+
+        // Files shared from another app go to the send review.
+        val shared = when (intent.action) {
+            Intent.ACTION_SEND -> listOfNotNull(intent.streamExtra())
+            Intent.ACTION_SEND_MULTIPLE -> intent.streamListExtra()
+            else -> emptyList()
+        }
+
+        if (shared.isNotEmpty()) {
+            vm.addToDraft(shared)
+            return
+        }
+
+        val data = intent.dataString ?: return
 
         if (data.startsWith(LINK_PREFIX))
             incomingLink.value = data
     }
+
+    private fun Intent.streamExtra(): Uri? =
+        if (Build.VERSION.SDK_INT >= 33) getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        else @Suppress("DEPRECATION") getParcelableExtra(Intent.EXTRA_STREAM)
+
+    private fun Intent.streamListExtra(): List<Uri> =
+        (if (Build.VERSION.SDK_INT >= 33) getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        else @Suppress("DEPRECATION") getParcelableArrayListExtra(Intent.EXTRA_STREAM)) ?: emptyList()
 }

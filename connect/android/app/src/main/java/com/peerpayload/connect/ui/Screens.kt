@@ -28,6 +28,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -70,6 +72,8 @@ import com.google.zxing.qrcode.QRCodeWriter
 import com.peerpayload.connect.R
 import com.peerpayload.connect.app.ConnectViewModel
 import com.peerpayload.connect.core.Contact
+import com.peerpayload.connect.core.Rate
+import com.peerpayload.connect.core.formatRemaining
 import com.peerpayload.connect.core.Transfer
 import com.peerpayload.connect.engine.NativeEngine
 
@@ -99,11 +103,11 @@ private val STATE_LABEL = mapOf(
 // ---- building blocks ----
 
 @Composable
-private fun Label(text: String, modifier: Modifier = Modifier) =
+internal fun Label(text: String, modifier: Modifier = Modifier) =
     Text(text.uppercase(), style = LabelStyle, color = LocalTokens.current.inkMuted, modifier = modifier)
 
 @Composable
-private fun Panel(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+internal fun Panel(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val t = LocalTokens.current
 
     Column(
@@ -117,11 +121,11 @@ private fun Panel(modifier: Modifier = Modifier, content: @Composable () -> Unit
 }
 
 @Composable
-private fun Primary(text: String, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) =
+internal fun Primary(text: String, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) =
     Button(onClick, modifier, enabled = enabled, shape = RoundedCornerShape(4.dp)) { Text(text, fontWeight = FontWeight.SemiBold) }
 
 @Composable
-private fun Secondary(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) =
+internal fun Secondary(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) =
     OutlinedButton(onClick, modifier, shape = RoundedCornerShape(4.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = LocalTokens.current.ink)) {
         Text(text)
     }
@@ -153,8 +157,11 @@ fun ConnectScreen(vm: ConnectViewModel, incomingLink: String?, onLinkHandled: ()
     val status by vm.status.collectAsState()
     val message by vm.message.collectAsState()
     val paired by vm.paired.collectAsState()
+    val transfers by vm.transfers.collectAsState()
+    val draft by vm.draft.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     var tab by rememberSaveable { mutableStateOf(Tab.TRANSFERS) }
+    val offers = transfers.filter { it.direction == "in" && it.state == "offered" }
 
     LaunchedEffect(message) {
         message?.let {
@@ -190,7 +197,11 @@ fun ConnectScreen(vm: ConnectViewModel, incomingLink: String?, onLinkHandled: ()
                         NavigationBarItem(
                             selected = tab == t,
                             onClick = { tab = t },
-                            icon = { Box(Modifier.size(width = 18.dp, height = 3.dp).background(if (tab == t) LocalTokens.current.accent else LocalTokens.current.border)) },
+                            icon = {
+                                BadgedBox(badge = { if (t == Tab.TRANSFERS && offers.isNotEmpty()) Badge(containerColor = LocalTokens.current.accent) { Text("${offers.size}", color = LocalTokens.current.accentInk) } }) {
+                                    Box(Modifier.size(width = 18.dp, height = 3.dp).background(if (tab == t) LocalTokens.current.accent else LocalTokens.current.border))
+                                }
+                            },
                             label = { Text(t.label, fontFamily = Mono, fontSize = 12.sp) },
                             colors = NavigationBarItemDefaults.colors(indicatorColor = LocalTokens.current.accentSoft),
                         )
@@ -199,16 +210,50 @@ fun ConnectScreen(vm: ConnectViewModel, incomingLink: String?, onLinkHandled: ()
             }
         },
     ) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) {
-            if (!status.hasIdentity)
-                SetupScreen(vm)
-            else when (tab) {
-                Tab.TRANSFERS -> TransfersScreen(vm)
-                Tab.CONTACTS -> ContactsScreen(vm)
-                Tab.DEVICE -> DeviceScreen(vm)
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            // Offers can't be missed: above every tab, like the desktop's banner.
+            if (status.hasIdentity)
+                offers.forEach { OfferBanner(it, vm) { tab = Tab.TRANSFERS } }
+
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                if (!status.hasIdentity)
+                    SetupScreen(vm)
+                else when (tab) {
+                    Tab.TRANSFERS -> TransfersScreen(vm)
+                    Tab.CONTACTS -> ContactsScreen(vm)
+                    Tab.DEVICE -> DeviceScreen(vm)
+                }
             }
         }
     }
+
+    // Picked or shared files wait here for review; once set up.
+    if (status.hasIdentity)
+        draft?.let { SendSheet(it, vm) }
+}
+
+@Composable
+private fun OfferBanner(x: Transfer, vm: ConnectViewModel, onAccepted: () -> Unit) {
+    val t = LocalTokens.current
+    val names = x.files.joinToString(", ") { it.name } + if (x.fileCount > x.files.size) " ..." else ""
+
+    Row(
+        Modifier.fillMaxWidth().background(t.surface).padding(start = 0.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.width(3.dp).height(64.dp).background(t.accent))
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Label("Incoming from ${x.peerName}")
+            Text(names, color = t.ink, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(formatBytes(x.totalBytes), fontFamily = Mono, fontSize = 12.sp, color = t.inkSecondary)
+        }
+        TextButton({ vm.decline(x.transferId) }) { Text("Decline", color = t.inkSecondary) }
+        Primary("Accept", modifier = Modifier.padding(end = 12.dp)) {
+            vm.accept(x.transferId)
+            onAccepted()
+        }
+    }
+    HorizontalDivider(color = t.border)
 }
 
 @Composable
@@ -264,6 +309,7 @@ private fun SetupScreen(vm: ConnectViewModel) {
 @Composable
 private fun TransfersScreen(vm: ConnectViewModel) {
     val transfers by vm.transfers.collectAsState()
+    val rates by vm.rates.collectAsState()
     val t = LocalTokens.current
 
     if (transfers.isEmpty()) {
@@ -282,13 +328,14 @@ private fun TransfersScreen(vm: ConnectViewModel) {
                 TextButton({ vm.clearFinished() }) { Text("Clear finished", color = t.inkSecondary, fontSize = 13.sp) }
             }
         }
-        items(transfers, key = { it.transferId }) { TransferCard(it, vm) }
+        items(transfers, key = { it.transferId }) { TransferCard(it, rates[it.transferId], vm) }
     }
 }
 
 @Composable
-private fun TransferCard(x: Transfer, vm: ConnectViewModel) {
+private fun TransferCard(x: Transfer, rate: Rate?, vm: ConnectViewModel) {
     val t = LocalTokens.current
+    var confirmRemove by remember { mutableStateOf(false) }
     val incoming = x.direction == "in"
     val names = x.files.joinToString(", ") { it.name } + if (x.fileCount > x.files.size) " ..." else ""
     val stateColor = when (x.state) {
@@ -331,6 +378,16 @@ private fun TransferCard(x: Transfer, vm: ConnectViewModel) {
                 "${formatBytes(progress?.bytes ?: 0)} of ${formatBytes(x.totalBytes)}  ${(fraction * 100).toInt()}%",
                 fontFamily = Mono, fontSize = 12.sp, color = t.inkSecondary,
             )
+
+            // Measured speed and time left, as on the desktop.
+            val speed = when (rate) {
+                null -> null
+                Rate.Measuring -> "measuring speed"
+                Rate.Stalled -> "no data for a few seconds"
+                is Rate.Speed -> "${formatBytes(rate.bytesPerSec.toLong())}/s" + (rate.secondsLeft?.let { " · ${formatRemaining(it)} left" } ?: "")
+            }
+
+            speed?.let { Text(it, fontFamily = Mono, fontSize = 12.sp, color = if (rate == Rate.Stalled) t.warning else t.inkSecondary) }
         }
 
         x.retry?.let { Text(it, fontSize = 12.sp, color = t.warning) }
@@ -351,7 +408,7 @@ private fun TransferCard(x: Transfer, vm: ConnectViewModel) {
                 x.state == "sending" || x.state == "receiving" -> add("Pause" to { vm.pause(x.transferId) })
                 x.resumable -> {
                     add("Resume" to { vm.resume(x.transferId) })
-                    add("Discard" to { vm.forget(x.transferId) })
+                    add("Remove" to { confirmRemove = true })
                 }
                 !x.active -> add("Remove" to { vm.forget(x.transferId) })
             }
@@ -366,6 +423,26 @@ private fun TransferCard(x: Transfer, vm: ConnectViewModel) {
             }
         }
     }
+
+    // Removing a resumable transfer loses its progress on both devices.
+    if (confirmRemove)
+        AlertDialog(
+            onDismissRequest = { confirmRemove = false },
+            confirmButton = {
+                TextButton({
+                    confirmRemove = false
+                    vm.forget(x.transferId)
+                }) { Text("Remove", color = t.critical) }
+            },
+            dismissButton = { TextButton({ confirmRemove = false }) { Text("Keep") } },
+            title = { Text("Remove this transfer?") },
+            text = {
+                Text(
+                    "It can't be resumed afterwards" + (if (incoming) ", and the part already received is deleted" else "") +
+                        ". ${x.peerName} is told too.",
+                )
+            },
+        )
 }
 
 // ---- contacts ----
@@ -384,7 +461,7 @@ private fun ContactsScreen(vm: ConnectViewModel) {
         val fp = sendTo
 
         if (fp != null && uris.isNotEmpty())
-            vm.send(fp, uris)
+            vm.addToDraft(uris, fp)
 
         sendTo = null
     }
