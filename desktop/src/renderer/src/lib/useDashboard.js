@@ -18,6 +18,9 @@ export default function useDashboard(user, onLogout) {
 
   const [sendError, setSendError] = useState(null);
   const [sendState, setSendState] = useState(null); // { phase, event }
+  // Who the current/last send went to: kept here (not in the Transfer
+  // screen) so it survives switching screens.
+  const [sentTo, setSentTo] = useState("");
 
   // Offers arrive by push, but a push sent while disconnected is lost, so
   // pending transfers addressed to this user in the polled list count too.
@@ -200,6 +203,7 @@ export default function useDashboard(user, onLogout) {
   }
 
   async function send(filePath, toUsername, chunkSize) {
+    setSentTo(toUsername);
     setSendError(null);
     setSendState({ phase: "starting" });
 
@@ -268,6 +272,7 @@ export default function useDashboard(user, onLogout) {
     respondingTo,
     respondToOffer,
     sendState,
+    sentTo,
     sendError,
     send,
     progress,
