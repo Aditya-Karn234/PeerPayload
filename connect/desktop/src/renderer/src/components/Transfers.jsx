@@ -126,7 +126,7 @@ function detail(t) {
       return `${formatBytes(t.progress?.bytes ?? 0)} of ${formatBytes(t.totalBytes)}${via}${retry}`;
     }
     case "complete":
-      return t.direction === "in" ? `Saved to ${t.outputDir}` : `Delivered${t.path === "relay" ? " via relay" : ""}`;
+      return t.direction === "in" ? `Saved to ${t.downloadDir}` : `Delivered${t.path === "relay" ? " via relay" : ""}`;
     case "declined":
       return t.direction === "out" ? `${t.peerName} declined` : "You declined";
     case "cancelled":

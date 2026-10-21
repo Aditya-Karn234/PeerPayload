@@ -70,7 +70,7 @@ function notifyTransfer(t) {
   if (t.direction === "in" && t.state === "offered")
     notify(`${t.peerName} wants to send you ${describe(t)}`, "Open PeerPayload Connect to accept or decline.");
   else if (t.direction === "in" && t.state === "complete")
-    notify(`Received ${describe(t)} from ${t.peerName}`, `Saved to ${t.outputDir}`);
+    notify(`Received ${describe(t)} from ${t.peerName}`, `Saved to ${t.downloadDir}`);
   else if (t.direction === "out" && t.state === "complete")
     notify(`Sent ${describe(t)} to ${t.peerName}`, "Delivered.");
   else if (t.state === "failed")
@@ -190,6 +190,9 @@ function registerIpcHandlers() {
   ipcMain.handle("accept", (event, transferId) => node.accept(transferId, loadSettings().downloadDir));
   ipcMain.handle("decline", (event, transferId) => node.decline(transferId));
   ipcMain.handle("cancel-offer", (event, transferId) => node.cancelOffer(transferId));
+  ipcMain.handle("pause", (event, transferId) => node.pause(transferId));
+  ipcMain.handle("resume", (event, transferId) => node.resume(transferId));
+  ipcMain.handle("clear-finished", () => node.clearFinished());
   ipcMain.handle("transfers", () => node.transfers());
 
   ipcMain.handle("copy", (event, text) => clipboard.writeText(String(text)));

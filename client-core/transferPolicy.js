@@ -91,6 +91,7 @@ const SWITCH_TO_RELAY_REASONS = new Set(["connection_failed", "tls_pin_mismatch"
 //   target   { host, port } the receiver advertised at accept time
 //   baseArgs engine args without -h/-p (token, id, chunk size, pin, path)
 //   relay    { getTicket } or null when the backend has no relay configured
+//   onSpawn  (handle) => void for each engine process started (to stop it)
 async function runSender({
   exePath,
   baseArgs,
@@ -99,6 +100,7 @@ async function runSender({
   onEvent,
   onRetry,
   onPath,
+  onSpawn,
   wait = sleep,
   probe = probeTcp,
   startBridge = startSenderBridge,
@@ -145,7 +147,7 @@ async function runSender({
         }
 
         onEvent?.(event, attempts, path);
-      });
+      }, onSpawn);
 
       if (finalEvent.event === "transfer_complete")
         return { finalEvent, attempts, connected, path };

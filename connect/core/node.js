@@ -113,6 +113,7 @@ function createConnectNode({ dir, keygenPath, engine, mailboxUrl = null, relayUr
       engine,
       relayUrl,
       onUpdate: (t) => emit("transfer", t),
+      log,
     });
 
     if (mailboxUrl) {
@@ -237,6 +238,20 @@ function createConnectNode({ dir, keygenPath, engine, mailboxUrl = null, relayUr
     cancelOffer(transferId) {
       requireStarted();
       return transfers.cancelOffer(transferId);
+    },
+    // Stops a running transfer on both sides; it can be resumed later.
+    pause(transferId) {
+      requireStarted();
+      return transfers.pause(transferId);
+    },
+    // Picks up an interrupted transfer, from either side.
+    resume(transferId) {
+      requireStarted();
+      return transfers.resume(transferId);
+    },
+    clearFinished() {
+      requireStarted();
+      return transfers.clearFinished();
     },
     transfers() {
       return transfers ? transfers.list() : [];

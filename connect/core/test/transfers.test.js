@@ -125,7 +125,7 @@ test("connect: send a folder directly between paired devices", async (t) => {
   assert.equal(received.state, "complete", received.error);
   for (const rel of ["a.jpg", "trip/b.jpg", "trip/notes.txt"])
     assert.equal(sha(path.join(out, "photos", rel)), sha(path.join(folder, rel)), rel);
-  assert.deepEqual(b.latest(offer.transferId).progress, { bytes: 1_500_010, total: 1_500_010 });
+  assert.deepEqual(b.latest(offer.transferId).progress, { bytes: 1_500_010, total: 1_500_010, resumedBytes: 0 });
 });
 
 test("connect: falls back to the relay when the receiver isn't directly reachable", async (t) => {
@@ -173,7 +173,7 @@ test("connect: offers and answers from anyone but the paired device are ignored"
   const file = path.join(makeFolder("spam", { "s.bin": 10 }), "s.bin");
   const spam = c.manager.send(bob.fingerprint, [file]);
   await sleep(500);
-  assert.equal(b.manager.list().length, 0, "Bob never sees Carol's offer");
+  assert.equal(b.manager.list().filter((x) => x.peer === carol.fingerprint).length, 0, "Bob never sees Carol's offer");
   c.manager.cancelOffer(c.manager.list()[0].transferId);
   assert.equal((await spam).state, "cancelled");
 

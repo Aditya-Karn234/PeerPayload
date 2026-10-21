@@ -94,6 +94,9 @@ const MESSAGES = {
       files: list(object({ name: str(255), size: int(0), files: int(0) }), MAX_OFFER_NAMES),
       fileCount: int(0),
       totalBytes: int(0),
+      // Continues an earlier, interrupted transfer with the same ID; the
+      // receiver that accepted it then may accept again without asking.
+      resume: optional(bool),
     },
   },
   accept: {
@@ -108,8 +111,13 @@ const MESSAGES = {
     check: (m) => m.addresses.length > 0 || m.relay,
   },
   decline: { fields: { transferId } },
-  // The sender gave up: before an answer, or after the transfer failed.
-  cancel: { fields: { transferId } },
+  // Either side stops: the sender gave up (before an answer, or after the
+  // transfer failed), or either side paused a running transfer, which
+  // leaves it resumable.
+  cancel: { fields: { transferId, paused: optional(bool) } },
+  // The receiver asks the sender to resume an interrupted transfer (the
+  // sender answers with a resume offer).
+  "resume-request": { fields: { transferId } },
 };
 
 function validate(type, payload) {

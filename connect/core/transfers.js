@@ -19,16 +19,26 @@ const { seal } = require("./envelope");
 // Connect file transfers between paired devices. The negotiation travels
 // as envelopes through the mailbox (message formats: protocol/messages.js):
 //
-//   sender   -> offer
+//   sender   -> offer (resume: true to continue an interrupted one)
 //   receiver -> accept (where to connect, engine token) | decline
 //   sender   -> cancel (gave up: before the receiver answered, or after
 //                       the transfer itself failed)
+//   either   -> cancel { paused: true } (stopped a running transfer; it
+//                       stays resumable)
+//   receiver -> resume-request (asks the sender for a resume offer)
 //
 // The bytes then go engine to engine, mutually authenticated with the two
 // device certificates: the sender pins the receiver's device ID, and the
 // receiver admits only the sender's. Direct when an advertised address
 // answers, otherwise through the relay with device-signed tickets. The
 // engine token travels only inside the encrypted accept envelope.
+//
+// History is kept in <identity dir>/transfers.json, so it survives a
+// restart; a transfer that was running when the app stopped comes back as
+// "interrupted" and can be resumed from either side. Each incoming
+// transfer is received into its own staging folder (<downloads>/.incoming/
+// <id>), where the engine keeps its resume state, and its files move into
+// the downloads folder only once complete.
 
 // How long a sender waits for the other device to answer an offer.
 const OFFER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -40,6 +50,19 @@ const OFFER_TIMEOUT_MS = 10 * 60 * 1000;
 // 8 MiB is faster still only above gigabit. Over the internet the
 // connection's own bandwidth is the limit either way.
 const CHUNK_SIZE = 1024 * 1024;
+
+// History kept on disk, newest first.
+const MAX_HISTORY = 200;
+
+const ACTIVE_STATES = new Set(["offered", "sending", "receiving"]);
+
+// Fields saved to disk. Progress is left out (it changes constantly and
+// is recomputed), and so is anything secret: the engine token is never
+// stored on a record.
+const STORED_FIELDS = [
+  "transferId", "direction", "peer", "peerName", "files", "fileCount", "totalBytes", "state", "error",
+  "createdAt", "updatedAt", "started", "path", "paths", "downloadDir", "stagingDir", "savedAs",
+];
 
 function summarize(paths) {
   const files = [];
@@ -111,14 +134,28 @@ async function pickAddress(addresses, port, probe) {
   return results.find(Boolean) || addresses[0];
 }
 
-// Bytes done so far, from the engine's per-chunk and per-file events. A
-// file's count is replaced by its size on file_complete, so chunks
-// re-sent after a resume can't push it past 100%.
+// Bytes done so far, from the engine's events. A resumed file starts at
+// the bytes already on disk (file_start's resumeChunk x the session's chunk
+// size); a file's count is replaced by its size on file_complete, so
+// nothing can push it past 100%. `resumedBytes` is how much was already
+// there when this attempt began.
 function progressTracker(total) {
   const perFile = new Map();
+  let chunkSize = 0;
+  let resumedBytes = 0;
 
   return (event) => {
-    if (event.event === "chunk_verified")
+    if (event.event === "session_start") {
+      chunkSize = Number(event.chunkSize) || 0;
+      return null;
+    }
+
+    if (event.event === "file_start") {
+      const already = Math.min((Number(event.resumeChunk) || 0) * chunkSize, Number(event.fileSize) || 0);
+
+      perFile.set(event.relPath, already);
+      resumedBytes += already;
+    } else if (event.event === "chunk_verified")
       perFile.set(event.relPath, (perFile.get(event.relPath) || 0) + (Number(event.bytes) || 0));
     else if (event.event === "file_complete")
       perFile.set(event.relPath, Number(event.bytes) || 0);
@@ -130,27 +167,131 @@ function progressTracker(total) {
     for (const n of perFile.values())
       bytes += n;
 
-    return { bytes: Math.min(bytes, total), total };
+    return { bytes: Math.min(bytes, total), total, resumedBytes };
   };
 }
 
-// identity     loadIdentity() result
+// A name in `dir` that doesn't exist yet: "report.pdf", "report (2).pdf", ...
+function freeName(dir, name) {
+  const ext = path.extname(name);
+  const stem = name.slice(0, name.length - ext.length);
+
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? name : `${stem} (${n})${ext}`;
+
+    if (!fs.existsSync(path.join(dir, candidate)))
+      return candidate;
+  }
+}
+
+// Moves a finished transfer's files out of its staging folder into the
+// downloads folder, renaming on clashes. Returns the names they got.
+function deliver(stagingDir, downloadDir) {
+  const saved = [];
+
+  for (const entry of fs.readdirSync(stagingDir)) {
+    if (entry === "transfer.state" || entry === "transfer.state.tmp")
+      continue;
+
+    const name = freeName(downloadDir, entry);
+
+    fs.renameSync(path.join(stagingDir, entry), path.join(downloadDir, name));
+    saved.push(name);
+  }
+
+  fs.rmSync(stagingDir, { recursive: true, force: true });
+
+  return saved;
+}
+
+// identity     loadIdentity() result (identity.dir also holds the history)
 // contacts     openContacts() store; only paired contacts can offer/accept
 // sendEnvelope (envelope) => Promise — usually mailboxClient.send
 // engine       { senderPath, receiverPath }
 // relayUrl     ws(s)://.../v1/connect, or null for direct only
 // onUpdate     (transfer) => void, called with a snapshot on every change
-function createTransferManager({ identity, contacts, sendEnvelope, engine, relayUrl = null, onUpdate = () => {}, probe = probeTcp }) {
-  const transfers = new Map(); // transferId -> state
+// log          (message) => void
+function createTransferManager({
+  identity,
+  contacts,
+  sendEnvelope,
+  engine,
+  relayUrl = null,
+  onUpdate = () => {},
+  log = () => {},
+  probe = probeTcp,
+  historyFile = path.join(identity.dir, "transfers.json"),
+}) {
+  const transfers = new Map(); // transferId -> record
   const waiters = new Map(); // transferId -> { resolve, reject, timer }
   const receivers = new Map(); // transferId -> engine handle, while receiving
+  const senders = new Map(); // transferId -> engine handle, while sending
+  const pausing = new Set(); // transferIds being paused (their engine exit isn't a failure)
 
-  const snapshot = (t) => ({ ...t, files: t.files && [...t.files] });
+  // Can be picked up again: it got going (accepted) but didn't finish, and
+  // nobody said no.
+  const resumable = (t) => Boolean(t.started) && ["failed", "cancelled", "interrupted", "waiting"].includes(t.state);
+
+  const snapshot = (t) => ({ ...t, files: t.files && [...t.files], resumable: resumable(t) });
+
+  // ---- history on disk ----
+
+  function load() {
+    let records = [];
+
+    try {
+      records = JSON.parse(fs.readFileSync(historyFile, "utf8"));
+    } catch {
+      return; // none yet, or unreadable: start empty
+    }
+
+    for (const r of Array.isArray(records) ? records : []) {
+      if (!r?.transferId)
+        continue;
+
+      // The app stopped while this was going.
+      if (ACTIVE_STATES.has(r.state) || r.state === "waiting")
+        Object.assign(r, { state: "interrupted", error: "PeerPayload Connect was closed during the transfer" });
+
+      transfers.set(r.transferId, r);
+    }
+  }
+
+  function save() {
+    const records = [...transfers.values()]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, MAX_HISTORY)
+      .map((t) => Object.fromEntries(STORED_FIELDS.filter((k) => t[k] !== undefined).map((k) => [k, t[k]])));
+    const tmp = `${historyFile}.tmp`;
+
+    try {
+      fs.writeFileSync(tmp, JSON.stringify(records, null, 1));
+      fs.renameSync(tmp, historyFile);
+    } catch (err) {
+      log(`couldn't save transfer history: ${err.message}`);
+    }
+  }
 
   function update(t, changes) {
-    Object.assign(t, changes);
+    Object.assign(t, changes, { updatedAt: Date.now() });
+
+    // Progress ticks aren't worth a disk write each.
+    if (!(Object.keys(changes).length === 1 && "progress" in changes))
+      save();
+
     onUpdate(snapshot(t));
   }
+
+  function add(t) {
+    t.updatedAt = Date.now();
+    transfers.set(t.transferId, t);
+    save();
+    onUpdate(snapshot(t));
+  }
+
+  load();
+
+  // ---- helpers ----
 
   function sendTo(fp, type, fields) {
     return sendEnvelope(seal({ identity, recipient: contacts.card(fp), payload: makeMessage(type, fields) }));
@@ -168,57 +309,62 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
 
   const identityArgs = () => ["--cert", identity.certPath, "--key", identity.keyPath];
 
-  // Sender: offer, wait for an answer, then run the engine.
-  async function send(peerFingerprint, paths) {
-    const contact = contacts.get(peerFingerprint);
+  function requirePaired(fp) {
+    const contact = contacts.get(fp);
 
     if (!contact || contact.status !== "paired")
       throw new Error("can only send to a paired contact");
 
-    if (!paths.length)
-      throw new Error("nothing to send");
+    return contact;
+  }
 
-    const transferId = crypto.randomBytes(12).toString("base64url");
-    const summary = summarize(paths);
-    const t = { transferId, direction: "out", peer: peerFingerprint, peerName: contact.name, ...summary, state: "offered", createdAt: Date.now() };
+  // ---- sender ----
 
-    transfers.set(transferId, t);
-    onUpdate(snapshot(t));
-
+  // Offer, wait for an answer, then run the engine. `resume` marks the
+  // offer as continuing an earlier attempt of the same transfer.
+  async function runOutgoing(t, { resume }) {
     let answer;
 
     try {
       const answered = new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
-          waiters.delete(transferId);
+          waiters.delete(t.transferId);
           reject(Object.assign(new Error("no answer from the other device"), { code: "timed_out" }));
         }, OFFER_TIMEOUT_MS);
 
-        waiters.set(transferId, { resolve, reject, timer });
+        waiters.set(t.transferId, { resolve, reject, timer });
       });
 
-      await sendTo(peerFingerprint, "offer", { transferId, ...summary });
+      await sendTo(t.peer, "offer", {
+        transferId: t.transferId,
+        files: t.files,
+        fileCount: t.fileCount,
+        totalBytes: t.totalBytes,
+        ...(resume && { resume: true }),
+      });
       answer = await answered;
     } catch (err) {
-      waiters.get(transferId) && clearTimeout(waiters.get(transferId).timer);
-      waiters.delete(transferId);
+      waiters.get(t.transferId) && clearTimeout(waiters.get(t.transferId).timer);
+      waiters.delete(t.transferId);
 
       if (err.code === "timed_out")
-        sendTo(peerFingerprint, "cancel", { transferId }).catch(() => {});
+        sendTo(t.peer, "cancel", { transferId: t.transferId }).catch(() => {});
 
-      update(t, { state: err.code === "timed_out" ? "timed_out" : err.code === "cancelled" ? "cancelled" : "failed", error: err.message });
+      // A resume that wasn't answered leaves the transfer resumable.
+      const state = resume ? "interrupted" : err.code === "timed_out" ? "timed_out" : err.code === "cancelled" ? "cancelled" : "failed";
+
+      update(t, { state, error: err.message });
       return snapshot(t);
     }
 
     if (answer.type === "decline") {
-      update(t, { state: "declined" });
+      update(t, { state: "declined", error: undefined });
       return snapshot(t);
     }
 
-    update(t, { state: "sending" });
+    update(t, { state: "sending", started: true, error: undefined, retry: undefined });
 
     const track = progressTracker(t.totalBytes);
-
     let outcome;
 
     try {
@@ -226,9 +372,9 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
 
       outcome = await runSender({
         exePath: engine.senderPath,
-        baseArgs: ["--token", answer.token, "--transfer-id", transferId, "--chunk-size", String(CHUNK_SIZE), ...identityArgs(), "--pin-sha256", peerFingerprint, ...paths],
+        baseArgs: ["--token", answer.token, "--transfer-id", t.transferId, "--chunk-size", String(CHUNK_SIZE), ...identityArgs(), "--pin-sha256", t.peer, ...t.paths],
         target: { host, port: answer.port },
-        relay: answer.relay ? relayFor(transferId, "sender", peerFingerprint) : null,
+        relay: answer.relay ? relayFor(t.transferId, "sender", t.peer) : null,
         probe,
         onPath: (p) => update(t, { path: p }),
         onEvent: (event) => {
@@ -238,38 +384,85 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
             update(t, { progress });
         },
         onRetry: ({ attempt, reason }) => update(t, { retry: { attempt, reason } }),
+        onSpawn: (handle) => senders.set(t.transferId, handle),
       });
     } catch (err) {
       outcome = { error: err.message };
+    } finally {
+      senders.delete(t.transferId);
+    }
+
+    if (pausing.delete(t.transferId)) {
+      update(t, { state: "interrupted", error: t.error ?? "paused", retry: undefined });
+      return snapshot(t);
     }
 
     const ok = outcome.finalEvent?.event === "transfer_complete";
 
     // The receiver would otherwise keep listening until its own timeout.
     if (!ok)
-      sendTo(peerFingerprint, "cancel", { transferId }).catch(() => {});
+      sendTo(t.peer, "cancel", { transferId: t.transferId }).catch(() => {});
 
-    update(t, { state: ok ? "complete" : "failed", error: ok ? undefined : outcome.error ?? outcome.finalEvent.reason, path: outcome.path });
+    update(t, {
+      state: ok ? "complete" : "failed",
+      error: ok ? undefined : outcome.error ?? outcome.finalEvent.reason,
+      path: outcome.path ?? t.path,
+      retry: undefined,
+      ...(ok && { progress: { ...t.progress, bytes: t.totalBytes, total: t.totalBytes } }),
+    });
 
     return snapshot(t);
   }
 
-  // Receiver: start the engine, tell the sender where it is, wait for it.
-  async function accept(transferId, outputDir) {
+  async function send(peerFingerprint, paths) {
+    const contact = requirePaired(peerFingerprint);
+
+    if (!paths.length)
+      throw new Error("nothing to send");
+
+    const absolute = paths.map((p) => path.resolve(p));
+    const t = {
+      transferId: crypto.randomBytes(12).toString("base64url"),
+      direction: "out",
+      peer: peerFingerprint,
+      peerName: contact.name,
+      ...summarize(absolute),
+      paths: absolute,
+      state: "offered",
+      createdAt: Date.now(),
+    };
+
+    add(t);
+
+    return runOutgoing(t, { resume: false });
+  }
+
+  // ---- receiver ----
+
+  // Start the engine, tell the sender where it is, wait for it. The first
+  // accept fixes the staging folder; a resume reuses it, so the engine
+  // continues from its saved state there.
+  async function accept(transferId, downloadDir) {
     const t = transfers.get(transferId);
 
     if (!t || t.direction !== "in" || t.state !== "offered")
       throw new Error("no such pending offer");
 
+    const target = t.downloadDir ?? downloadDir;
+
+    if (!target)
+      throw new Error("no folder to receive into");
+
+    const stagingDir = t.stagingDir ?? path.join(target, ".incoming", transferId);
     const token = crypto.randomBytes(24).toString("hex");
     const port = await findFreePort();
 
-    fs.mkdirSync(outputDir, { recursive: true });
-    update(t, { state: "receiving", outputDir });
+    fs.mkdirSync(stagingDir, { recursive: true });
+    update(t, { state: "receiving", started: true, downloadDir: target, stagingDir, error: undefined });
 
     const args = [
       "-p", String(port),
-      "-o", outputDir,
+      "-o", stagingDir,
       "--token", token,
       "--transfer-id", transferId,
       ...identityArgs(),
@@ -308,16 +501,31 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
       finalEvent = await finished;
     } catch (err) {
       receivers.get(transferId)?.kill();
-      update(t, t.state === "cancelled" ? {} : { state: "failed", error: err.message });
+
+      if (pausing.delete(transferId))
+        update(t, { state: "interrupted", error: t.error ?? "paused" });
+      else if (t.state !== "cancelled")
+        update(t, { state: "failed", error: err.message });
+
       return snapshot(t);
     } finally {
       receivers.delete(transferId);
       bridge?.stop();
     }
 
-    const ok = finalEvent.event === "transfer_complete";
+    if (finalEvent.event !== "transfer_complete") {
+      update(t, { state: "failed", error: finalEvent.reason });
+      return snapshot(t);
+    }
 
-    update(t, { state: ok ? "complete" : "failed", error: ok ? undefined : finalEvent.reason });
+    try {
+      const savedAs = deliver(stagingDir, target);
+
+      update(t, { state: "complete", savedAs, stagingDir: undefined, progress: { ...t.progress, bytes: t.totalBytes, total: t.totalBytes } });
+    } catch (err) {
+      // Received fine, but couldn't be moved: say where the files are.
+      update(t, { state: "failed", error: `received, but couldn't move the files out of ${stagingDir}: ${err.message}` });
+    }
 
     return snapshot(t);
   }
@@ -332,10 +540,70 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
     await sendTo(t.peer, "decline", { transferId });
   }
 
+  // ---- pause / resume ----
+
+  // Stops a running transfer on both sides, leaving it resumable. `by` is
+  // who asked, for the message shown.
+  function stopRunning(t, by) {
+    const handle = t.direction === "out" ? senders.get(t.transferId) : receivers.get(t.transferId);
+
+    if (!handle)
+      return false;
+
+    pausing.add(t.transferId);
+    t.error = by;
+    handle.kill();
+
+    return true;
+  }
+
+  function pause(transferId) {
+    const t = transfers.get(transferId);
+
+    if (!t || !(t.state === "sending" || t.state === "receiving"))
+      throw new Error("only a running transfer can be paused");
+
+    sendTo(t.peer, "cancel", { transferId, paused: true }).catch(() => {});
+
+    if (!stopRunning(t, "paused"))
+      throw new Error("this transfer isn't running here");
+
+    return snapshot(t);
+  }
+
+  // Picks an interrupted transfer up again. The sender re-offers it; the
+  // receiver asks the sender to.
+  async function resume(transferId) {
+    const t = transfers.get(transferId);
+
+    if (!t || !resumable(t))
+      throw new Error("this transfer can't be resumed");
+
+    requirePaired(t.peer);
+
+    if (t.direction === "out") {
+      const missing = t.paths.find((p) => !fs.existsSync(p));
+
+      if (missing)
+        throw new Error(`${missing} is no longer there, so this can't be resumed; send it again`);
+
+      update(t, { state: "offered", error: undefined });
+
+      return runOutgoing(t, { resume: true });
+    }
+
+    update(t, { state: "waiting", error: undefined });
+    await sendTo(t.peer, "resume-request", { transferId });
+
+    return snapshot(t);
+  }
+
+  // ---- incoming messages ----
+
   // Feed every opened envelope here. Returns true if it was a transfer
   // message (handled or deliberately ignored), false otherwise.
   function handleEnvelope({ from, payload }) {
-    if (!["offer", "accept", "decline", "cancel"].includes(payload?.type))
+    if (!["offer", "accept", "decline", "cancel", "resume-request"].includes(payload?.type))
       return false;
 
     const message = parseMessage(payload);
@@ -348,10 +616,18 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
 
     switch (message.type) {
       case "offer": {
-        if (t)
-          return true; // redelivery
+        if (t) {
+          // The sender resuming something we already accepted: accept
+          // again into the same staging folder, without asking.
+          if (message.resume && t.direction === "in" && t.peer === from && resumable(t)) {
+            update(t, { state: "offered" });
+            accept(t.transferId).catch((err) => log(`resuming ${t.transferId} failed: ${err.message}`));
+          }
 
-        const offer = {
+          return true; // otherwise a redelivery
+        }
+
+        add({
           transferId: message.transferId,
           direction: "in",
           peer: from,
@@ -361,10 +637,7 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
           totalBytes: message.totalBytes,
           state: "offered",
           createdAt: Date.now(),
-        };
-
-        transfers.set(offer.transferId, offer);
-        onUpdate(snapshot(offer));
+        });
         return true;
       }
 
@@ -389,7 +662,16 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
       }
 
       case "cancel":
-        if (!t || t.direction !== "in" || t.peer !== from)
+        if (!t || t.peer !== from)
+          return true;
+
+        // The other side paused: stop our engine too, resumable.
+        if (message.paused && (t.state === "sending" || t.state === "receiving")) {
+          stopRunning(t, `paused by ${t.peerName}`);
+          return true;
+        }
+
+        if (t.direction !== "in")
           return true;
 
         if (t.state === "offered")
@@ -400,6 +682,12 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
           update(t, { state: "cancelled", error: "the sender stopped the transfer" });
           receivers.get(t.transferId)?.kill();
         }
+
+        return true;
+
+      case "resume-request":
+        if (t && t.direction === "out" && t.peer === from && resumable(t))
+          resume(t.transferId).catch((err) => log(`resume of ${t.transferId} requested, but: ${err.message}`));
 
         return true;
     }
@@ -423,13 +711,25 @@ function createTransferManager({ identity, contacts, sendEnvelope, engine, relay
     return true;
   }
 
+  // Forgets finished transfers (not ones that are running or resumable).
+  function clearFinished() {
+    for (const [id, t] of transfers)
+      if (!ACTIVE_STATES.has(t.state) && !resumable(t))
+        transfers.delete(id);
+
+    save();
+  }
+
   return {
     send,
     accept,
     decline,
+    pause,
+    resume,
     cancelOffer,
+    clearFinished,
     handleEnvelope,
-    list: () => [...transfers.values()].map(snapshot),
+    list: () => [...transfers.values()].sort((a, b) => b.createdAt - a.createdAt).map(snapshot),
     get: (id) => (transfers.has(id) ? snapshot(transfers.get(id)) : null),
   };
 }

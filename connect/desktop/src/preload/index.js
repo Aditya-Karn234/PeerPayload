@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld("connect", {
   accept: invoke("accept"),
   decline: invoke("decline"),
   cancelOffer: invoke("cancel-offer"),
+  pause: invoke("pause"),
+  resume: invoke("resume"),
+  clearFinished: invoke("clear-finished"),
   transfers: invoke("transfers"),
 
   copy: invoke("copy"),
