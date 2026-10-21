@@ -50,19 +50,20 @@ async function launch(name, env = {}) {
   const home = path.join(profile, "home");
   fs.mkdirSync(path.join(home, "Downloads"), { recursive: true });
 
+  const fullEnv = {
+    // Inherited from editors' terminals; it makes Electron run as plain Node.
+    ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "ELECTRON_RUN_AS_NODE" && !k.startsWith("PEERPAYLOAD_"))),
+    CONNECT_USER_DATA: path.join(profile, "userdata"),
+    HOME: home,
+    USERPROFILE: home,
+    ...env,
+  };
   const app = await electron.launch({
     executablePath: ELECTRON,
     // --disable-gpu: the GPU process can fail to start on test machines.
     args: [APP, "--disable-gpu"],
     cwd: APP,
-    env: {
-      // Inherited from editors' terminals; it makes Electron run as plain Node.
-      ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "ELECTRON_RUN_AS_NODE" && !k.startsWith("PEERPAYLOAD_"))),
-      CONNECT_USER_DATA: path.join(profile, "userdata"),
-      HOME: home,
-      USERPROFILE: home,
-      ...env,
-    },
+    env: fullEnv,
     timeout: 60000,
   });
 
@@ -71,7 +72,7 @@ async function launch(name, env = {}) {
 
   const page = await app.firstWindow();
 
-  return { app, page, home, name };
+  return { app, page, home, name, env: fullEnv };
 }
 
 // The native file picker can't be clicked by a test: make it return these paths.
@@ -161,7 +162,50 @@ test("ui: two devices pair with an invite link and send a file", { timeout: 1800
   await alice.page.getByText(/^Saved to /).waitFor();
   await shot(alice.page, "5-received");
 
-  // A second offer, declined.
+  // Background receiving: Alice closes her window; the app stays in the
+  // tray, gets Bob's next offer and says so with a notification.
+  await alice.app.evaluate(({ Notification, BrowserWindow }) => {
+    // Record notifications instead of showing them.
+    const shown = (globalThis.__notifications = []);
+    Notification.isSupported = () => true;
+    Notification.prototype.show = function () { shown.push(this.title); };
+    BrowserWindow.getAllWindows()[0].close();
+  });
+  const aliceWindowVisible = () => alice.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible());
+  const aliceNotifications = () => alice.app.evaluate(() => globalThis.__notifications);
+  assert.equal(await aliceWindowVisible(), false, "closing hides the window; the app keeps running");
+
+  const file2 = path.join(tmp, "notes.txt");
+  fs.writeFileSync(file2, "sent while Alice's window was closed");
+  await pickWillReturn(bob.app, [file2]);
+  await tab(bob.page, "Contacts");
+  await bob.page.getByTestId("contact-Alice").getByRole("button", { name: "Send files" }).click();
+  for (let i = 0; !(await aliceNotifications()).some((t) => t.startsWith("Bob wants to send you “notes.txt”")); i++) {
+    assert.ok(i < 100, `no offer notification; got ${JSON.stringify(await aliceNotifications())}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.ok((await aliceNotifications()).includes("PeerPayload Connect is still running"), "told once that it's still running");
+
+  // Clicking the notification (or the tray icon) brings the window back.
+  await alice.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show());
+  await alice.page.getByRole("region", { name: "Offer from Bob" }).getByRole("button", { name: "Accept" }).click();
+  await bob.page.locator('[data-testid="transfer-out"][data-state="complete"]').first().waitFor({ timeout: 30000 });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(fs.readFileSync(path.join(alice.home, "Downloads", "PeerPayload", "notes.txt"), "utf8"), "sent while Alice's window was closed");
+
+  // Launching again with the same data folder (a second click on the
+  // shortcut) doesn't start a second copy: it exits and the running one
+  // comes back to the front.
+  await alice.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].hide());
+  const second = require("child_process").spawn(ELECTRON, [APP, "--disable-gpu"], { cwd: APP, env: alice.env, stdio: "ignore" });
+  const secondExit = await Promise.race([new Promise((r) => second.on("exit", r)), new Promise((r) => setTimeout(() => r("still running"), 20000))]);
+  assert.equal(secondExit, 0, "the second copy exits");
+  for (let i = 0; !(await aliceWindowVisible()); i++) {
+    assert.ok(i < 50, "the running copy's window came back");
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  // A third offer, declined.
   await tab(bob.page, "Contacts");
   await bob.page.getByTestId("contact-Alice").getByRole("button", { name: "Send files" }).click();
   await alice.page.getByRole("region", { name: "Offer from Bob" }).getByRole("button", { name: "Decline" }).click();

@@ -154,10 +154,14 @@ CONNECT_USER_DATA=/tmp/bob   PEERPAYLOAD_MAILBOX=http://localhost:4300 npx elect
 `npm run test:ui` in `connect/desktop` drives two app windows through
 setup, pairing and a transfer.
 
+The app runs in the tray: closing the window keeps it receiving, offers
+and finished transfers show as notifications, and it can start when you
+sign in (tray menu, installed app only).
+
 Not done yet: no mailbox or relay is deployed for public use (set your own
-in Settings); transfer history is kept only while the app runs; closing the
-window quits (no tray), so it can't receive in the background; no
-messaging, multi-device or revocation yet; Android not started.
+in Settings); transfer history is kept only while the app runs; the
+mailbox keeps undelivered messages in memory only; no messaging,
+multi-device or revocation yet; Android not started.
 
 ## How the engine works
 
