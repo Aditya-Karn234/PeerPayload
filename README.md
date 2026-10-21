@@ -282,6 +282,15 @@ engine first; there are no npm dependencies:
 node --test "tests/engine/*.test.js"
 ```
 
+To build the engine and run every suite in the repo (engine library,
+engine, relay, Connect mailbox, Connect core) in one go, as CI does:
+
+```sh
+npm test               # builds first; on Windows MinGW64 must be at C:\msys64 (or set MINGW_BIN)
+npm run test:quick     # skip the build
+node tools/test-all.js --only relay,connect-core
+```
+
 | Suite | Covers |
 |---|---|
 | `integrity.test.js` | Byte-identical output across empty/1-byte/chunk-boundary files, every chunk size 4 KiB–8 MiB, window sizes, TLS and plaintext, nested/unicode directories, multiple sources, and truncation of a stale longer destination file. |
@@ -361,7 +370,7 @@ Some deliberate, some just not built yet:
   runs but stays the same size, resume splices old and new bytes into a
   corrupted file and still reports success. Covered by a `todo` test in
   `resume.test.js`.
-- **No CI.** Nothing builds or tests these automatically on push.
+- **CI covers tests only.** `.github/workflows/test.yml` runs `npm test` on Windows and Linux for every push; it doesn't build or publish the desktop installer, and the backend has no automated tests.
 
 ## Project layout
 

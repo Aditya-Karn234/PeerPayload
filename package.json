@@ -1,0 +1,9 @@
+{
+  "name": "peerpayload",
+  "private": true,
+  "description": "Repo root: no code or dependencies here. Each package (backend, desktop, cli, client-core, relay, connect/*) installs on its own.",
+  "scripts": {
+    "test": "node tools/test-all.js",
+    "test:quick": "node tools/test-all.js --no-build"
+  }
+}

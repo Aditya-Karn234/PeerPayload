@@ -54,7 +54,9 @@ for (const noTls of [false, true]) {
       "a frozen link hung instead of timing out"
     );
 
-    assert.ok(proxy.frozen, "proxy never froze — file too small?");
+    assert.ok(proxy.frozen, `proxy never froze; sender: ${failureReason(sender)}, receiver: ${failureReason(receiver)}
+${sender.stderr}
+${receiver.stderr}`);
     assert.notEqual(senderExit.code, 0);
     assert.notEqual(receiverExit.code, 0);
     assert.equal(failureReason(sender), "peer_timeout", sender.stderr);
