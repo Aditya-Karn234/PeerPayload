@@ -14,7 +14,7 @@ export function initAutoUpdater() {
 
   autoUpdater.on("update-downloaded", (info) => {
     new Notification({
-      title: "PeerPayload update ready",
+      title: "PeerPayload Enterprise update ready",
       body: `Version ${info.version} will install the next time you quit.`,
     }).show();
   });

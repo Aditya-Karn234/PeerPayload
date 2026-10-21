@@ -1,8 +1,8 @@
 {
   "name": "peerpayload-desktop",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
-  "description": "PeerPayload desktop app: login, presence, recipient picker, and a background receive listener around the same engine/backend the CLI uses.",
+  "description": "PeerPayload Enterprise desktop app: login, presence, recipient picker, and a background receive listener around the same engine/backend the CLI uses.",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
