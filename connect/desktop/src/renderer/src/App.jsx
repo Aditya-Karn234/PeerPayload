@@ -20,6 +20,7 @@ export default function App() {
   const [settingsSection, setSettingsSection] = useState("general");
   const [historyTab, setHistoryTab] = useState("active");
   const [notice, setNotice] = useState(null);
+  const [linkToAdd, setLinkToAdd] = useState(null);
 
   const refresh = useCallback(async () => {
     const next = await window.connect.status();
@@ -44,6 +45,8 @@ export default function App() {
         setNotice(`You and ${data.name} are now paired.`);
       else if (name === "transfer")
         setTransfers((prev) => new Map(prev).set(data.transferId, data));
+      else if (name === "open-link")
+        takeLink();
       else if (name === "transfer-removed")
         setTransfers((prev) => {
           const next = new Map(prev);
@@ -53,6 +56,22 @@ export default function App() {
         });
     });
   }, [refresh]);
+
+  // A pairing link the app was opened with: show it in Devices to confirm.
+  const takeLink = useCallback(async () => {
+    const link = await window.connect.takeLink();
+
+    if (link) {
+      setLinkToAdd(link);
+      setPage("devices");
+    }
+  }, []);
+
+  // Also once set up (a link that arrived before the identity existed waits).
+  useEffect(() => {
+    if (status?.hasIdentity)
+      takeLink();
+  }, [status?.hasIdentity, takeLink]);
 
   // Clearing removes records without per-record events: reload the list.
   const clearFinished = useCallback(async () => {
@@ -116,7 +135,7 @@ export default function App() {
 
         <main className="min-h-0 flex-1 overflow-y-auto">
           {page === "transfer" && <TransferPage contacts={contacts} transfers={transferList} rates={rates} onNavigate={go} />}
-          {page === "devices" && <DevicesPage contacts={contacts} transfers={transferList} status={status} onNavigate={go} />}
+          {page === "devices" && <DevicesPage contacts={contacts} transfers={transferList} status={status} onNavigate={go} openedLink={linkToAdd} onLinkUsed={() => setLinkToAdd(null)} />}
           {page === "history" && <HistoryPage transfers={transferList} rates={rates} tab={historyTab} onTab={setHistoryTab} onClearFinished={clearFinished} />}
           {page === "settings" && <SettingsPage status={status} section={settingsSection} onSection={setSettingsSection} onSaved={refresh} />}
         </main>

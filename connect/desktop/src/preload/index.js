@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld("connect", {
   resume: invoke("resume"),
   clearFinished: invoke("clear-finished"),
   forget: invoke("forget"),
+  // A pairing link this app was opened with, once (null if none).
+  takeLink: invoke("take-link"),
   transfers: invoke("transfers"),
 
   describePaths: invoke("describe-paths"),

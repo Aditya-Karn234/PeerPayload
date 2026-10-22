@@ -1,14 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, Clock3, Copy, Laptop, Link2, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { Button, Field, IconButton, Mono, SectionLabel, TextInput } from "@peerpayload/ui";
 
 import { errorMessage, lastTransferLabel, shortId } from "../lib/util";
 
-export default function DevicesPage({ contacts, transfers, status, onNavigate }) {
+export default function DevicesPage({ contacts, transfers, status, onNavigate, openedLink, onLinkUsed }) {
   return (
     <div className="divide-y divide-[var(--color-border)]">
       <InviteSection status={status} onNavigate={onNavigate} />
-      <AddSection />
+      <AddSection openedLink={openedLink} onLinkUsed={onLinkUsed} />
       <PairedSection contacts={contacts} transfers={transfers} />
     </div>
   );
@@ -96,12 +96,24 @@ function InviteSection({ status, onNavigate }) {
   );
 }
 
-// The other half: paste a link someone sent.
-function AddSection() {
+// The other half: paste a link someone sent, or one that opened this app
+// (clicked in a browser, email or chat), shown here to confirm.
+function AddSection({ openedLink, onLinkUsed }) {
   const [link, setLink] = useState("");
+  const [fromClick, setFromClick] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (openedLink) {
+      setLink(openedLink);
+      setFromClick(true);
+      setResult(null);
+      setError(null);
+      onLinkUsed?.();
+    }
+  }, [openedLink, onLinkUsed]);
 
   async function submit(e) {
     e.preventDefault();
@@ -114,6 +126,7 @@ function AddSection() {
 
       setResult(`Pairing request sent to ${contact.name}. It's paired once their device answers, usually within seconds.`);
       setLink("");
+      setFromClick(false);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -126,6 +139,11 @@ function AddSection() {
       <SectionLabel as="h2">
         <span id="add-heading">Add a device</span>
       </SectionLabel>
+      {fromClick && (
+        <p className="mt-3 max-w-2xl border-l-2 border-[var(--color-accent)] bg-[var(--color-surface)] px-4 py-2.5 text-sm" role="status" data-testid="opened-link">
+          You opened a pairing link. Add the device if it's from someone you know.
+        </p>
+      )}
       <form onSubmit={submit} className="mt-4 flex max-w-2xl items-end gap-3">
         <Field label="Invite link" error={error} className="flex-1">
           <TextInput value={link} onChange={(e) => setLink(e.target.value)} placeholder="peerpayload://pair#…" className="font-mono text-xs" required />

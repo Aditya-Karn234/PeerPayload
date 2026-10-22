@@ -23,6 +23,13 @@ extraResources:
   - from: ../../build/engine/ppkeygen.exe
     to: engine/ppkeygen.exe
 
+# peerpayload://pair#... links open the app. Windows: registered by the
+# app itself at startup (src/main/index.js); this entry declares it in the
+# Linux desktop file (and macOS, if built).
+protocols:
+  - name: PeerPayload pairing link
+    schemes: [peerpayload]
+
 win:
   # Prebuilt multi-size .ico (16-256 px), so the build doesn't have to
   # convert icon.png (electron-builder's converter ran out of memory).
@@ -32,6 +39,8 @@ win:
       arch: [x64]
 
 nsis:
+  # Removes the peerpayload:// link registration on uninstall.
+  include: resources/installer.nsh
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true

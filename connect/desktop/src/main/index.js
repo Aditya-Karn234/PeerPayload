@@ -25,7 +25,12 @@ if (process.env.CONNECT_USER_DATA)
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on("second-instance", () => showWindow());
+  // Launching again with a pairing link (clicked in a browser, email or
+  // chat) hands it to the running copy.
+  app.on("second-instance", (event, argv) => {
+    showWindow();
+    openLink(linkIn(argv));
+  });
   app.whenReady().then(start);
 }
 
@@ -36,6 +41,23 @@ let quitting = false;
 let toldAboutTray = false;
 
 const ACTIVE_STATES = new Set(["offered", "sending", "receiving"]);
+
+// Pairing links (peerpayload://pair#...) open this app: Windows passes the
+// link as a command-line argument. It's held until the window takes it
+// (takeLink), which shows it in Devices > Add a device to confirm: a link
+// is never added without the user clicking Add.
+const LINK_SCHEME = "peerpayload";
+let pendingLink = null;
+
+const linkIn = (argv) => argv.find((a) => typeof a === "string" && a.toLowerCase().startsWith(`${LINK_SCHEME}://pair`)) ?? null;
+
+function openLink(link) {
+  if (!link)
+    return;
+
+  pendingLink = link;
+  sendToRenderer("open-link", null);
+}
 
 function sendToRenderer(name, data) {
   mainWindow?.webContents.send("connect-event", { name, data });
@@ -199,6 +221,12 @@ function registerIpcHandlers() {
   ipcMain.handle("pause", (event, transferId) => node.pause(transferId));
   ipcMain.handle("resume", (event, transferId) => node.resume(transferId));
   ipcMain.handle("clear-finished", () => node.clearFinished());
+  ipcMain.handle("take-link", () => {
+    const link = pendingLink;
+
+    pendingLink = null;
+    return link;
+  });
   ipcMain.handle("forget", (event, transferId) => node.forget(transferId));
   ipcMain.handle("transfers", () => node.transfers());
 
@@ -284,6 +312,14 @@ function start() {
   // Windows shows this name on notifications.
   app.setAppUserModelId("com.peerpayload.connect");
 
+  // The installed app registers itself for pairing links (per user, no
+  // admin needed; installer.nsh removes it on uninstall). Not in dev runs,
+  // which would point Windows at the bare electron.exe.
+  if (app.isPackaged)
+    app.setAsDefaultProtocolClient(LINK_SCHEME);
+
+  pendingLink = linkIn(process.argv);
+
   startNode();
   registerIpcHandlers();
 
@@ -292,7 +328,7 @@ function start() {
   for (const event of ["resume", "unlock-screen"])
     powerMonitor.on(event, () => node?.reconnectNow());
   // Started at sign-in (see tray.js): straight to the tray.
-  createWindow({ hidden: process.argv.includes("--hidden") });
+  createWindow({ hidden: process.argv.includes("--hidden") && !pendingLink });
   tray = createTray({ onOpen: showWindow, onQuit: quit, getStatus: () => node.status() });
 }
 
