@@ -66,10 +66,12 @@ dependencies {
     implementation("org.bouncycastle:bcpkix-jdk18on:1.80")
     // Mailbox: HTTPS POSTs and the inbox WebSocket.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    // Pairing QR codes: drawing them, and scanning with Google Play
-    // services' scanner (no camera permission for this app).
+    // Pairing QR codes: ZXing draws them and decodes camera frames from
+    // CameraX (the scanner is in the app, not Play services').
     implementation("com.google.zxing:core:3.5.3")
-    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    implementation("androidx.camera:camera-camera2:1.4.1")
+    implementation("androidx.camera:camera-lifecycle:1.4.1")
+    implementation("androidx.camera:camera-view:1.4.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

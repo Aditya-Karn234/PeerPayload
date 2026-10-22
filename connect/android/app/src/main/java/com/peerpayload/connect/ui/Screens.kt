@@ -63,9 +63,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -560,21 +557,17 @@ private fun ContactsScreen(vm: ConnectViewModel) {
 
 @Composable
 private fun AddContactDialog(vm: ConnectViewModel, onClose: () -> Unit) {
-    val context = LocalContext.current
     var link by remember { mutableStateOf("") }
+    var scanning by remember { mutableStateOf(false) }
 
-    fun scan() {
-        val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
-
-        GmsBarcodeScanning.getClient(context, options).startScan()
-            .addOnSuccessListener { code ->
-                code.rawValue?.let {
-                    vm.addContact(it)
-                    onClose()
-                }
-            }
-            .addOnFailureListener { vm.message.value = "Couldn't open the scanner: ${it.message}" }
-    }
+    if (scanning)
+        return ScannerScreen(
+            onLink = {
+                vm.addContact(it)
+                onClose()
+            },
+            onClose = { scanning = false },
+        )
 
     AlertDialog(
         onDismissRequest = onClose,
@@ -583,7 +576,7 @@ private fun AddContactDialog(vm: ConnectViewModel, onClose: () -> Unit) {
         title = { Text("Add contact") },
         text = {
             Column {
-                Primary("Scan QR code", modifier = Modifier.fillMaxWidth()) { scan() }
+                Primary("Scan QR code", modifier = Modifier.fillMaxWidth()) { scanning = true }
                 Spacer(Modifier.height(14.dp))
                 Label("Or paste their invite link")
                 Spacer(Modifier.height(6.dp))
