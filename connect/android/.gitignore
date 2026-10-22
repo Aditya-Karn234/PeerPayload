@@ -5,3 +5,7 @@ local.properties
 app/src/main/jniLibs/
 hs_err_pid*.log
 replay_pid*.log
+
+# Release signing key and its password: kept here, NEVER committed.
+# Back it up elsewhere too: without it no update can be published.
+signing/

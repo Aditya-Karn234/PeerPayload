@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -22,9 +24,30 @@ android {
         }
     }
 
+    // Release signing key: connect/android/signing/ (git-ignored, never
+    // pushed; see its keystore.properties). Without it, release builds
+    // are left unsigned and can't be installed.
+    val signingProps = rootProject.file("signing/keystore.properties").takeIf { it.isFile }?.let { f ->
+        Properties().apply { f.inputStream().use(::load) }
+    }
+
+    signingConfigs {
+        if (signingProps != null) {
+            create("release") {
+                storeFile = rootProject.file("signing/${signingProps.getProperty("storeFile")}")
+                storePassword = signingProps.getProperty("storePassword")
+                keyAlias = signingProps.getProperty("keyAlias")
+                keyPassword = signingProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
