@@ -79,6 +79,7 @@ const vectors = {
       { type: "cancel", transferId: "abcdefgh12", paused: true },
       { type: "cancel", transferId: "abcdefgh12", removed: true },
       { type: "resume-request", transferId: "abcdefgh12" },
+      { type: "reverse", transferId: "abcdefgh12", addresses: ["192.168.137.35"], port: 50555, key: "ab".repeat(32) },
       { type: "offer", transferId: "abcdefgh12", files: [], fileCount: 0, totalBytes: 0, resume: true },
       { type: "pair-accept" },
       { type: "pair-request", secret, card: core.contactCard(bob.id), mailbox: "https://mailbox.example" },

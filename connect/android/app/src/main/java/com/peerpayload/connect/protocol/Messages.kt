@@ -25,6 +25,7 @@ private val SECRET = Regex("^[A-Za-z0-9_-]+$")
 private val URL = Regex("^https?://\\S+$")
 private val IPV4 = Regex("^((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.){3}(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)$")
 private val IPV6_CHARS = Regex("^[0-9A-Fa-f:.]+$")
+private val REVERSE_KEY = Regex("^[0-9a-f]{64}$")
 
 data class FileSummary(val name: String, val size: Long, val files: Long)
 
@@ -60,6 +61,11 @@ sealed class Message {
         override val type = "resume-request"
     }
 
+    /** The sender couldn't reach us: dial one of [addresses]:[port] and open with [key] (hex). */
+    data class Reverse(val transferId: String, val addresses: List<String>, val port: Int, val key: String) : Message() {
+        override val type = "reverse"
+    }
+
     fun toJson(): JsonObject = buildJsonObject {
         put("type", type)
         when (val m = this@Message) {
@@ -92,6 +98,12 @@ sealed class Message {
                 if (m.removed) put("removed", true)
             }
             is ResumeRequest -> put("transferId", m.transferId)
+            is Reverse -> {
+                put("transferId", m.transferId)
+                put("addresses", buildJsonArray { m.addresses.forEach { add(JsonPrimitive(it)) } })
+                put("port", m.port)
+                put("key", m.key)
+            }
         }
     }.also {
         // Fail loudly here rather than be silently dropped by the receiver.
@@ -194,6 +206,19 @@ fun parseMessage(payload: JsonObject): Message? {
             if (!okPaused || !okRemoved) null else Message.Cancel(id, paused ?: false, removed ?: false)
         }
         "resume-request" -> Message.ResumeRequest(payload.str("transferId", 64, TRANSFER_ID) ?: return null)
+        "reverse" -> {
+            val id = payload.str("transferId", 64, TRANSFER_ID) ?: return null
+            val addressesJson = payload["addresses"] as? JsonArray ?: return null
+
+            if (addressesJson.isEmpty() || addressesJson.size > 16)
+                return null
+
+            val addresses = addressesJson.map { a -> (a as? JsonPrimitive)?.takeIf { it.isString && isIp(it.content) }?.content ?: return null }
+            val port = payload["port"].integer(1, 65535) ?: return null
+            val key = payload.str("key", 64, REVERSE_KEY) ?: return null
+
+            Message.Reverse(id, addresses, port.toInt(), key)
+        }
         else -> null
     }
 }

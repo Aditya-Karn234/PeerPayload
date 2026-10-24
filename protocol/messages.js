@@ -120,6 +120,19 @@ const MESSAGES = {
   // The receiver asks the sender to resume an interrupted transfer (the
   // sender answers with a resume offer, or a removed cancel).
   "resume-request": { fields: { transferId } },
+  // The sender couldn't reach the receiver: it listens instead, and the
+  // receiver dials out to one of these addresses and opens the connection
+  // with `key` (hex, 32 bytes) before the engines' own TLS. Receivers that
+  // don't know this type ignore it; the sender then uses the relay.
+  reverse: {
+    fields: {
+      transferId,
+      addresses: list(ip, 16),
+      port: int(1, 65535),
+      key: str(64, /^[0-9a-f]{64}$/),
+    },
+    check: (m) => m.addresses.length > 0,
+  },
 };
 
 function validate(type, payload) {

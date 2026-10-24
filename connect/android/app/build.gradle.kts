@@ -15,8 +15,8 @@ android {
         applicationId = "com.peerpayload.connect"
         minSdk = 26 // Android 8.0; the engine is built for this API level
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.1.2"
 
         ndk {
             // Phones, and the x86_64 emulator. Must match engine/build-engine.sh.

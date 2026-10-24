@@ -137,6 +137,7 @@ class VectorsTest {
             Message.Offer("abcdefgh12", listOf(FileSummary("photo.jpg", 1234, 1)), 1, 1234),
             Message.Accept("abcdefgh12", "t0ken", 40123, listOf("192.168.1.7"), true),
             Message.Cancel("abcdefgh12", removed = true),
+            Message.Reverse("abcdefgh12", listOf("192.168.137.35", "::1"), 50555, "cd".repeat(32)),
         )
         val out = kotlinx.serialization.json.buildJsonArray {
             for (m in messages)

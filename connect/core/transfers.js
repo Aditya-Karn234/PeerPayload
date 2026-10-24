@@ -15,6 +15,7 @@ const { probeTcp } = require("client-core/relayBridge");
 const { issueDeviceTicket, makeMessage, parseMessage, MAX_OFFER_NAMES } = require("peerpayload-protocol");
 
 const { seal } = require("./envelope");
+const { newKey, startReverseBridge, startReverseDialer } = require("./reverse");
 
 // Connect file transfers between paired devices. The negotiation travels
 // as envelopes through the mailbox (message formats: protocol/messages.js):
@@ -29,11 +30,14 @@ const { seal } = require("./envelope");
 //                       other side ends its copy for good)
 //   receiver -> resume-request (asks the sender for a resume offer; one
 //                       nobody answers goes back to interrupted)
+//   sender   -> reverse (couldn't reach the receiver: it dials out to the
+//                       sender instead, see reverse.js)
 //
 // The bytes then go engine to engine, mutually authenticated with the two
 // device certificates: the sender pins the receiver's device ID, and the
 // receiver admits only the sender's. Direct when an advertised address
-// answers, otherwise through the relay with device-signed tickets. The
+// answers; else reversed (the receiver dials the sender) when it can;
+// else through the relay with device-signed tickets. The
 // engine token travels only inside the encrypted accept envelope.
 //
 // History is kept in <identity dir>/transfers.json, so it survives a
@@ -45,6 +49,11 @@ const { seal } = require("./envelope");
 
 // How long a sender waits for the other device to answer an offer.
 const OFFER_TIMEOUT_MS = 10 * 60 * 1000;
+
+// How long a sender waits for the receiver to dial back after a `reverse`
+// message (a mailbox round trip plus the dial) before using the relay. A
+// receiver too old to know the message never dials; this is what it costs.
+const REVERSE_WAIT_MS = 8000;
 
 // The engine's 64 KiB default spends most of its time waiting on per-chunk
 // acks: Connect measured 12-17 MiB/s direct with it, against 90-115 MiB/s
@@ -129,12 +138,11 @@ function findFreePort() {
   });
 }
 
-// First advertised address that answers, or the first one (the sender then
-// falls back to the relay when it doesn't).
-async function pickAddress(addresses, port, probe) {
+// First advertised address that answers, or null.
+async function firstReachable(addresses, port, probe) {
   const results = await Promise.all(addresses.map((host) => probe(host, port, 3000).then((ok) => ok && host)));
 
-  return results.find(Boolean) || addresses[0];
+  return results.find(Boolean) || null;
 }
 
 // Bytes done so far, from the engine's events. A resumed file starts at
@@ -226,6 +234,8 @@ function createTransferManager({
   probe = probeTcp,
   historyFile = path.join(identity.dir, "transfers.json"),
   offerTimeoutMs = OFFER_TIMEOUT_MS,
+  allowReverse = true,
+  reverseWaitMs = REVERSE_WAIT_MS,
 }) {
   const transfers = new Map(); // transferId -> record
   const waiters = new Map(); // transferId -> { resolve, reject, timer }
@@ -233,6 +243,8 @@ function createTransferManager({
   const senders = new Map(); // transferId -> engine handle, while sending
   const pausing = new Set(); // transferIds being paused (their engine exit isn't a failure)
   const resumeTimers = new Map(); // transferId -> timer, while a resume-request waits
+  const enginePorts = new Map(); // transferId -> receiver engine port, while receiving
+  const dialers = new Map(); // transferId -> reverse dialer, while receiving
 
   // Can be picked up again: it got going (accepted) but didn't finish, and
   // nobody said no or removed it.
@@ -377,15 +389,28 @@ function createTransferManager({
     const track = progressTracker(t.totalBytes);
     let outcome;
 
+    let reversed = null;
+
     try {
-      const host = await pickAddress(answer.addresses, answer.port, probe);
+      const host = await firstReachable(answer.addresses, answer.port, probe);
+      let target = host && { host, port: answer.port };
+
+      // Unreachable: let the receiver dial us before settling for the relay.
+      if (!target && allowReverse) {
+        reversed = await tryReverse(t);
+
+        if (reversed)
+          target = { host: "127.0.0.1", port: reversed.localPort };
+      }
 
       outcome = await runSender({
         exePath: engine.senderPath,
         baseArgs: ["--token", answer.token, "--transfer-id", t.transferId, "--chunk-size", String(CHUNK_SIZE), ...identityArgs(), "--pin-sha256", t.peer, ...t.paths],
-        target: { host, port: answer.port },
+        // Neither: an address that fails the probe, so runSender goes to the relay.
+        target: target ?? { host: answer.addresses[0], port: answer.port },
         relay: answer.relay ? relayFor(t.transferId, "sender", t.peer) : null,
-        probe,
+        // The reversed bridge is local and always "reachable".
+        probe: (h, p, ms) => (reversed && h === "127.0.0.1" && p === reversed.localPort ? Promise.resolve(true) : probe(h, p, ms)),
         onPath: (p) => update(t, { path: p }),
         onEvent: (event) => {
           const progress = track(event);
@@ -400,6 +425,7 @@ function createTransferManager({
       outcome = { error: err.message };
     } finally {
       senders.delete(t.transferId);
+      reversed?.close();
     }
 
     if (pausing.delete(t.transferId)) {
@@ -425,6 +451,27 @@ function createTransferManager({
     });
 
     return snapshot(t);
+  }
+
+  // Opens a port for the receiver to dial and asks it to; the bridge if a
+  // verified connection arrives in time, else null (closed).
+  async function tryReverse(t) {
+    const key = newKey();
+    const bridge = await startReverseBridge({ key, log });
+
+    try {
+      await sendTo(t.peer, "reverse", { transferId: t.transferId, addresses: localAddresses(), port: bridge.port, key });
+
+      if (await bridge.arrived(reverseWaitMs))
+        return bridge;
+
+      log(`transfer ${t.transferId}: ${t.peerName} didn't dial back; using the relay`);
+    } catch (err) {
+      log(`transfer ${t.transferId}: reverse connection not possible: ${err.message}`);
+    }
+
+    bridge.close();
+    return null;
   }
 
   async function send(peerFingerprint, paths) {
@@ -504,6 +551,7 @@ function createTransferManager({
 
     try {
       await listening;
+      enginePorts.set(transferId, port);
 
       const relay = relayFor(transferId, "receiver", t.peer);
 
@@ -528,6 +576,9 @@ function createTransferManager({
       return snapshot(t);
     } finally {
       receivers.delete(transferId);
+      enginePorts.delete(transferId);
+      dialers.get(transferId)?.stop();
+      dialers.delete(transferId);
       bridge?.stop();
     }
 
@@ -629,7 +680,7 @@ function createTransferManager({
   // Feed every opened envelope here. Returns true if it was a transfer
   // message (handled or deliberately ignored), false otherwise.
   function handleEnvelope({ from, payload }) {
-    if (!["offer", "accept", "decline", "cancel", "resume-request"].includes(payload?.type))
+    if (!["offer", "accept", "decline", "cancel", "resume-request", "reverse"].includes(payload?.type))
       return false;
 
     const message = parseMessage(payload);
@@ -720,6 +771,26 @@ function createTransferManager({
         }
 
         return true;
+
+      case "reverse": {
+        const enginePort = enginePorts.get(message.transferId);
+
+        // Only the sender of a transfer we're receiving right now.
+        if (!t || t.direction !== "in" || t.peer !== from || t.state !== "receiving" || !enginePort)
+          return true;
+
+        dialers.get(t.transferId)?.stop();
+        dialers.set(t.transferId, startReverseDialer({
+          addresses: message.addresses,
+          port: message.port,
+          key: message.key,
+          enginePort,
+          onConnected: () => t.path !== "direct" && update(t, { path: "direct" }),
+          log,
+        }));
+
+        return true;
+      }
 
       case "resume-request":
         if (t && t.direction === "out" && t.peer === from && resumable(t))

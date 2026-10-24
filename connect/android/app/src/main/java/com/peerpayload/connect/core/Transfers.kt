@@ -4,6 +4,9 @@ import com.peerpayload.connect.engine.EngineRun
 import com.peerpayload.connect.engine.Program
 import com.peerpayload.connect.engine.event
 import com.peerpayload.connect.net.ReceiverBridge
+import com.peerpayload.connect.net.ReverseBridge
+import com.peerpayload.connect.net.ReverseDialer
+import com.peerpayload.connect.net.newReverseKey
 import com.peerpayload.connect.net.RelayAccess
 import com.peerpayload.connect.net.SenderBridge
 import com.peerpayload.connect.net.probeTcp
@@ -54,6 +57,8 @@ import java.util.Base64
 //   either   -> cancel { removed: true } (deleted it, or never had it: the
 //               other side ends its copy for good)
 //   receiver -> resume-request (one nobody answers goes back to interrupted)
+//   sender   -> reverse (couldn't reach the receiver: it dials out to the
+//               sender instead, see net/ReverseBridge.kt)
 //
 // The bytes go engine to engine, mutually authenticated with the two
 // device certificates: direct when an advertised address answers,
@@ -65,6 +70,10 @@ import java.util.Base64
 // incoming transfer out of its staging folder (into Downloads).
 
 const val OFFER_TIMEOUT_MS = 10 * 60 * 1000L
+
+// How long a sender waits for the receiver to dial back after a `reverse`
+// message before using the relay (transfers.js REVERSE_WAIT_MS).
+private const val REVERSE_WAIT_MS = 8000L
 private const val CHUNK_SIZE = 1024 * 1024 // see transfers.js: ~7x faster than 64 KiB on a LAN
 private const val MAX_HISTORY = 200
 
@@ -140,6 +149,8 @@ class Transfers(
     private val engines = HashMap<String, EngineRun>() // running engine per transfer
     private val pausing = HashSet<String>()
     private val probeNotes = HashMap<String, String>() // transferId -> what the direct probe found, for failures
+    private val enginePorts = HashMap<String, Int>() // receiver engine port, while receiving
+    private val dialers = HashMap<String, ReverseDialer>() // reverse dialers, while receiving
     private val resumeWaits = HashMap<String, kotlinx.coroutines.Job>() // resume-requests waiting for an offer
     private val random = SecureRandom()
 
@@ -390,12 +401,17 @@ class Transfers(
             candidates.map { host -> async { host to probeTcp(host, answer.port, DIRECT_PROBE_TIMEOUT_MS) } }.awaitAll()
         }
         val target = answered.firstOrNull { it.second }?.first
+        // Unreachable: let the receiver dial us before settling for the relay.
+        val reversed = if (target == null) tryReverse(t) else null
+        val directHost = if (reversed != null) "127.0.0.1" else target ?: candidates[0]
+        val directPort = reversed?.localPort ?: answer.port
 
-        val probeNote = "direct: " + answered.joinToString { (host, ok) -> "$host ${if (ok) "answered" else "no answer"}" }
+        val probeNote = "direct: " + answered.joinToString { (host, ok) -> "$host ${if (ok) "answered" else "no answer"}" } +
+            if (target == null) "; reversed: ${if (reversed != null) "receiver dialed back" else "no dial-back"}" else ""
 
         synchronized(probeNotes) { probeNotes[id] = probeNote }
         log("transfer $id: port ${answer.port}, $probeNote")
-        var path = if (target == null && relay != null) "relay" else "direct"
+        var path = if (target == null && reversed == null && relay != null) "relay" else "direct"
         var bridge: SenderBridge? = null
         var connected = false
         var switched = false
@@ -406,13 +422,13 @@ class Transfers(
 
         try {
             while (true) {
-                if (path == "direct" && attempts > 0 && relay != null && !probeTcp(target ?: candidates[0], answer.port, DIRECT_PROBE_TIMEOUT_MS)) {
+                if (path == "direct" && attempts > 0 && relay != null && !probeTcp(directHost, directPort, DIRECT_PROBE_TIMEOUT_MS)) {
                     path = "relay"
                     update(id) { it.copy(path = path) }
                 }
 
-                var host = target ?: candidates[0]
-                var port = answer.port
+                var host = directHost
+                var port = directPort
 
                 if (path == "relay") {
                     bridge = bridge ?: withContext(Dispatchers.IO) { SenderBridge(http, relay!!) }
@@ -470,7 +486,28 @@ class Transfers(
             }
         } finally {
             bridge?.close()
+            reversed?.close()
         }
+    }
+
+    /** Opens a port for the receiver to dial and asks it to; the bridge if it dials in time, else null. */
+    private suspend fun tryReverse(t: Transfer): ReverseBridge? = withContext(Dispatchers.IO) {
+        val key = newReverseKey()
+        val bridge = ReverseBridge(key, log)
+
+        try {
+            sendMessage(t.peer, Message.Reverse(t.transferId, localAddresses(), bridge.port, key))
+
+            if (bridge.arrived(REVERSE_WAIT_MS))
+                return@withContext bridge
+
+            log("transfer ${t.transferId}: ${t.peerName} didn't dial back; using the relay")
+        } catch (e: Exception) {
+            log("transfer ${t.transferId}: reverse connection not possible: ${e.message}")
+        }
+
+        bridge.close()
+        null
     }
 
     // ---- receiver ----
@@ -516,6 +553,7 @@ class Transfers(
             engine.invokeOnCompletion { listening.complete(Unit) } // ended before listening: await below sees why
 
             listening.await()
+            synchronized(enginePorts) { enginePorts[id] = port }
 
             if (engine.isCompleted)
                 engine.await()
@@ -544,6 +582,8 @@ class Transfers(
             return
         } finally {
             synchronized(engines) { engines.remove(id) }
+            synchronized(enginePorts) { enginePorts.remove(id) }
+            synchronized(dialers) { dialers.remove(id) }?.close()
             bridge?.close()
         }
 
@@ -690,7 +730,7 @@ class Transfers(
     fun handleEnvelope(opened: Opened): Boolean {
         val type = opened.payload["type"]?.jsonPrimitive?.content
 
-        if (type !in setOf("offer", "accept", "decline", "cancel", "resume-request"))
+        if (type !in setOf("offer", "accept", "decline", "cancel", "resume-request", "reverse"))
             return false
 
         val message = parseMessage(opened.payload)
@@ -770,6 +810,21 @@ class Transfers(
                     update(t.transferId) { it.copy(state = "cancelled", error = "the sender stopped the transfer") }
                     synchronized(engines) { engines[t.transferId] }?.cancel()
                 }
+            }
+
+            is Message.Reverse -> {
+                val t = get(message.transferId)
+                val enginePort = synchronized(enginePorts) { enginePorts[message.transferId] }
+
+                // Only the sender of a transfer we're receiving right now.
+                if (t == null || t.direction != "in" || t.peer != from || t.state != "receiving" || enginePort == null)
+                    return true
+
+                val dialer = ReverseDialer(message.addresses, message.port, message.key, enginePort, log = log, onConnected = {
+                    if (get(t.transferId)?.path != "direct") update(t.transferId) { it.copy(path = "direct") }
+                })
+
+                synchronized(dialers) { dialers.put(t.transferId, dialer) }?.close()
             }
 
             is Message.ResumeRequest -> {

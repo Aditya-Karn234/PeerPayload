@@ -56,7 +56,7 @@ after(async () => {
 
 // A device: contacts + mailbox client + transfer manager, wired the way
 // the app wires them. `probe` lets a test pretend direct paths don't work.
-function device(t, identity, { probe, relay: useRelay = true, engine: engineOverride } = {}) {
+function device(t, identity, { probe, relay: useRelay = true, engine: engineOverride, reverse = true } = {}) {
   const contacts = core.openContacts(identity.dir);
   const updates = [];
   let manager;
@@ -73,6 +73,7 @@ function device(t, identity, { probe, relay: useRelay = true, engine: engineOver
     engine: { ...engine, ...engineOverride },
     relayUrl: useRelay ? relayUrl : null,
     onUpdate: (s) => updates.push(s),
+    allowReverse: reverse,
     ...(probe && { probe }),
   });
   client.start();
@@ -128,8 +129,27 @@ test("connect: send a folder directly between paired devices", async (t) => {
   assert.deepEqual(b.latest(offer.transferId).progress, { bytes: 1_500_010, total: 1_500_010, resumedBytes: 0 });
 });
 
-test("connect: falls back to the relay when the receiver isn't directly reachable", async (t) => {
+test("connect: unreachable receiver dials the sender instead (reversed, still direct)", async (t) => {
   const a = device(t, alice, { probe: async () => false });
+  const b = device(t, bob);
+  pair(a, b);
+  await until(() => a.client.connected && b.client.connected);
+
+  const pairsBefore = relay.stats.pairs;
+  const file = path.join(makeFolder("reversed", { "big.bin": 3_000_000 }), "big.bin");
+  const out = path.join(tmp, "bob-downloads-reversed");
+  const { sent, received } = await offerAndAccept(a, b, [file], out);
+
+  assert.equal(sent.state, "complete", sent.error);
+  assert.equal(sent.path, "direct");
+  assert.equal(received.state, "complete", received.error);
+  assert.equal(received.path, "direct", "the receiver dialed out");
+  assert.equal(relay.stats.pairs, pairsBefore, "the relay wasn't used");
+  assert.equal(sha(path.join(out, "big.bin")), sha(file));
+});
+
+test("connect: falls back to the relay when neither direction works", async (t) => {
+  const a = device(t, alice, { probe: async () => false, reverse: false });
   const b = device(t, bob);
   pair(a, b);
   await until(() => a.client.connected && b.client.connected);
