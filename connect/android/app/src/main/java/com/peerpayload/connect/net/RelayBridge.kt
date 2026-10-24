@@ -5,6 +5,8 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import java.io.IOException
@@ -27,13 +29,20 @@ import kotlin.concurrent.thread
 private const val HIGH_WATER = 4L * 1024 * 1024 // stop reading TCP above this many queued bytes
 private const val PAIR_TIMEOUT_MS = 30_000L
 
+// The engines talk to the bridges over IPv4 loopback ("-h 127.0.0.1").
+// Not InetAddress.getLoopbackAddress(): on Android that's ::1, so the
+// engine's connection was refused and relayed transfers failed at once.
+internal val LOCALHOST: InetAddress = InetAddress.getByAddress("localhost", byteArrayOf(127, 0, 0, 1))
+
 /** Where to connect: the relay's ws(s) URL and a device-signed ticket. */
 data class RelayAccess(val url: String, val ticket: String)
 
 private fun relayRequest(access: RelayAccess) =
     Request.Builder().url("${access.url}?ticket=${URLEncoder.encode(access.ticket, "UTF-8")}").build()
 
-private fun isPaired(text: String) = runCatching { org.json.JSONObject(text).optString("type") == "paired" }.getOrDefault(false)
+private fun isPaired(text: String) = runCatching {
+    kotlinx.serialization.json.Json.parseToJsonElement(text).jsonObject["type"]?.jsonPrimitive?.content == "paired"
+}.getOrDefault(false)
 
 /**
  * One relay socket: waits for "paired", then forwards bytes both ways with
@@ -124,7 +133,7 @@ private class Splice(private val onPaired: () -> Unit = {}, private val tcpProvi
 
 /** Sender side: a local port for the sender engine. Each engine connection gets its own relay socket. */
 class SenderBridge(private val http: OkHttpClient, private val getAccess: () -> RelayAccess) : AutoCloseable {
-    private val server = ServerSocket(0, 8, InetAddress.getLoopbackAddress())
+    private val server = ServerSocket(0, 8, LOCALHOST)
     private val live = mutableSetOf<Socket>()
 
     val port: Int get() = server.localPort
@@ -193,7 +202,7 @@ class ReceiverBridge(
             var backoff = 1000L
 
             while (!stopped) {
-                val splice = Splice(onPaired) { Socket().apply { connect(InetSocketAddress(InetAddress.getLoopbackAddress(), enginePort), 5000) } }
+                val splice = Splice(onPaired) { Socket().apply { connect(InetSocketAddress(LOCALHOST, enginePort), 5000) } }
 
                 try {
                     val ws = http.newWebSocket(relayRequest(getAccess()), splice)

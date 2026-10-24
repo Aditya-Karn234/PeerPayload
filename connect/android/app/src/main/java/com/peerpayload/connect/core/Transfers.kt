@@ -139,6 +139,7 @@ class Transfers(
     private val waiters = HashMap<String, CompletableDeferred<Answer>>()
     private val engines = HashMap<String, EngineRun>() // running engine per transfer
     private val pausing = HashSet<String>()
+    private val probeNotes = HashMap<String, String>() // transferId -> what the direct probe found, for failures
     private val resumeWaits = HashMap<String, kotlinx.coroutines.Job>() // resume-requests waiting for an offer
     private val random = SecureRandom()
 
@@ -353,6 +354,8 @@ class Transfers(
         if (!ok && get(id)?.ended == true)
             return
 
+        val probeNote = synchronized(probeNotes) { probeNotes.remove(id) }
+
         // The receiver would otherwise keep listening until its own timeout.
         if (!ok)
             send(t.peer, Message.Cancel(id))
@@ -360,7 +363,13 @@ class Transfers(
         update(id) {
             it.copy(
                 state = if (ok) "complete" else "failed",
-                error = if (ok) null else final?.get("reason")?.jsonPrimitive?.content ?: "the transfer engine stopped unexpectedly",
+                // A failure says what the route attempts found, so a
+                // screenshot is enough to tell a firewall from a bug.
+                error = if (ok) null else listOfNotNull(
+                    final?.get("reason")?.jsonPrimitive?.content ?: "the transfer engine stopped unexpectedly",
+                    path?.let { "last tried via $it" },
+                    probeNote,
+                ).joinToString(" · "),
                 path = path ?: it.path,
                 retry = null,
                 progress = if (ok) Progress(it.totalBytes, it.totalBytes, it.progress?.resumedBytes ?: 0) else it.progress,
@@ -377,9 +386,15 @@ class Transfers(
         val track = progressTracker(t.totalBytes)
         // A relay-only answer has no address to try directly.
         val candidates = answer.addresses.ifEmpty { listOf("127.0.0.1") }
-        val target = withContext(Dispatchers.IO) {
-            candidates.map { host -> async { host.takeIf { probeTcp(it, answer.port, DIRECT_PROBE_TIMEOUT_MS) } } }.awaitAll().firstOrNull { it != null }
+        val answered = withContext(Dispatchers.IO) {
+            candidates.map { host -> async { host to probeTcp(host, answer.port, DIRECT_PROBE_TIMEOUT_MS) } }.awaitAll()
         }
+        val target = answered.firstOrNull { it.second }?.first
+
+        val probeNote = "direct: " + answered.joinToString { (host, ok) -> "$host ${if (ok) "answered" else "no answer"}" }
+
+        synchronized(probeNotes) { probeNotes[id] = probeNote }
+        log("transfer $id: port ${answer.port}, $probeNote")
         var path = if (target == null && relay != null) "relay" else "direct"
         var bridge: SenderBridge? = null
         var connected = false
@@ -433,6 +448,8 @@ class Transfers(
                     return final to path
 
                 val reason = final["reason"]?.jsonPrimitive?.content
+
+                log("transfer $id: engine via $path ($host:$port) ended: $reason")
 
                 if (path == "direct" && relay != null && !switched && !startedThisAttempt && reason in SWITCH_TO_RELAY_REASONS) {
                     switched = true
