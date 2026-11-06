@@ -24,10 +24,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Text
@@ -50,9 +51,11 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -118,10 +121,15 @@ fun ScannerScreen(onLink: (String) -> Unit, onClose: () -> Unit) {
         if (!granted) request.launch(Manifest.permission.CAMERA)
     }
 
+    // Read here, in the activity: some phones (Samsung) give the dialog's own
+    // window a zero navigation-bar inset, which put "Light on" on the home button.
+    val density = LocalDensity.current
+    val navBottom = with(density) { WindowInsets.navigationBars.getBottom(density).toDp() }
+
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             if (granted)
-                CameraWithFinder(onLink)
+                CameraWithFinder(onLink, navBottom)
             else if (asked)
                 Column(
                     Modifier.fillMaxSize().padding(32.dp),
@@ -149,7 +157,7 @@ fun ScannerScreen(onLink: (String) -> Unit, onClose: () -> Unit) {
 }
 
 @Composable
-private fun CameraWithFinder(onLink: (String) -> Unit) {
+private fun CameraWithFinder(onLink: (String) -> Unit, navBottom: Dp) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current
     val executor = remember { Executors.newSingleThreadExecutor() }
@@ -211,7 +219,7 @@ private fun CameraWithFinder(onLink: (String) -> Unit) {
         }
 
         Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(24.dp),
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = navBottom).padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
