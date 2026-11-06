@@ -136,11 +136,14 @@ one-time invite link or QR code, and files go device to device over mutual
 TLS with those keys, directly or through the relay.
 
 - `connect/core/`: everything a Connect device does (`createConnectNode`);
-  the desktop app is a UI over it, and the Android app will reuse it.
+  the desktop app is a UI over it.
 - `connect/mailbox/`: store-and-forward for the small encrypted messages
   (pairing, transfer offers) between devices that aren't both online. It
-  can't read them or forge them.
-- `connect/desktop/`: the Electron app.
+  can't read them or forge them. Messages are kept in memory, or in SQLite
+  with `MAILBOX_DB=<file>` so they survive a restart.
+- `connect/desktop/`: the Electron app (0.2.5).
+- `connect/android/`: the Android app (0.1.3, Android 8+), described
+  [below](#android).
 
 To try it on one machine with two devices:
 
@@ -156,7 +159,31 @@ setup, pairing and a transfer.
 
 The app runs in the tray: closing the window keeps it receiving, offers
 and finished transfers show as notifications, and it can start when you
-sign in (tray menu, installed app only).
+sign in (tray menu, installed app only). On Windows the installed app
+opens `peerpayload://pair` links (from a browser, email or chat) on
+Devices with the link filled in. It's only added once you click Add device.
+
+Transfers can be paused from either side and resumed from either side,
+even after both apps restart. Each incoming transfer goes to its own
+staging folder (`<downloads>/.incoming/<id>`) and its files only move into
+the downloads folder once complete. History (the last 200 transfers) is
+saved in `<identity dir>/transfers.json`. A transfer that was running when
+the app stopped comes back as "interrupted".
+
+How a transfer connects, in order:
+
+1. **Direct:** the sender connects to the receiver's addresses.
+2. **Reversed:** if it can't (a firewall, mobile data, a laptop's own
+   hotspot), it asks the receiver to dial out to it instead. A one-time key
+   in the encrypted offer authenticates the dial. Older apps ignore the
+   request and the sender moves on after 8 s.
+3. **Relay:** the slowest option, limited by the slower side's upload.
+   Both apps show a hint under relayed transfers explaining why it happened
+   and what to change.
+
+The engines' pinned mutual TLS runs end to end on all three paths: the
+reversed and relay paths go through local bridges, so the engines never
+see the difference.
 
 Hosted services (Render free plan, `connect/render.yaml`, from the
 `connect-foundation` branch) are the app's defaults; either can be
@@ -176,8 +203,51 @@ usually the sender's upload: a relayed test ran at 0.23-0.37 MiB/s,
 matching that test machine's own ~3 Mbit/s upload, so the relay's
 capacity wasn't what was measured.
 
-Not done yet: transfer history is kept only while the app runs; no
-messaging, multi-device or revocation yet; Android not started.
+### Android
+
+A native Kotlin app (Jetpack Compose, minSdk 26, targetSdk 35) that speaks
+the same protocol as the desktop app. It runs the same C++ engine,
+`libpeerpayload.so`, through a JNI bridge (`engine/jni/`). The protocol,
+mailbox client, relay and reverse bridges, and the transfer manager are
+Kotlin ports of the JavaScript ones.
+
+- Pairing: show an invite QR or link, scan one with the in-app scanner
+  (CameraX + ZXing; it reads only `peerpayload://pair` codes), or paste a
+  link. Tapping a pairing link opens the app.
+- Sending: pick files from a contact, or Share from any other app. Both go
+  through a review step (files, total size, recipient) before anything is
+  sent.
+- Receiving: offers show as a banner on every tab. Received files go to
+  `Downloads/PeerPayload`.
+- Running transfers show speed and time left, and can be paused, resumed
+  or removed as on the desktop.
+
+Building it, from `connect/android`:
+
+```sh
+# 1. The engine for arm64-v8a and x86_64 (NDK r27c, static OpenSSL), in Docker.
+#    Rerun after engine or JNI changes; the .so files are git-ignored.
+docker run --rm -v "<repo>:/src" -v pp-android-cache:/cache \
+  debian:bookworm bash /src/connect/android/engine/build-engine.sh
+
+# 2. The app, with JDK 17 and Gradle 8.11.1
+gradle :app:assembleDebug        # or :app:assembleRelease
+gradle :app:testDebugUnitTest    # then: node tools/check-kotlin.js
+```
+
+Release builds are signed only when `signing/keystore.properties` is
+present. That folder is git-ignored. Keep a backup of it somewhere else:
+without the key, no update can be installed over an APK that's already
+been shared. R8 shrinking keeps the APK at about 19 MB.
+
+Interop is tested both ways. `VectorsTest` checks the Kotlin code against
+vectors from the JavaScript reference (`tools/make-vectors.js`), and
+`tools/check-kotlin.js` opens envelopes sealed by Kotlin with the
+JavaScript code. Tested on a Galaxy A14 5G (Android 15) against the
+desktop app: pairing and transfers both ways over the same Wi-Fi, the
+laptop's hotspot (reversed) and the relay.
+
+Not done yet: no messaging, multi-device or revocation; no iOS.
 
 ## How the engine works
 
@@ -245,9 +315,9 @@ don't use any of this.
 ### Using the engine as a library
 
 The same engine also builds as a library, `peerpayload` (`.dll`/`.so`), for
-apps that can't launch the `sender`/`receiver` programs (Android). The two
-programs are now just `main()` wrappers around that library, so there is one
-implementation either way.
+apps that can't launch the `sender`/`receiver` programs; the Connect
+Android app uses it through JNI. The two programs are now just `main()`
+wrappers around that library, so there is one implementation either way.
 
 The C API (`engine/include/peerpayload.h`) takes the programs' exact
 command-line arguments and delivers their exact JSON events through a
@@ -384,7 +454,8 @@ Some deliberate, some just not built yet:
   router port-mapping (UPnP/NAT-PMP) yet. Relayed transfers are slower and
   cost relay bandwidth. Each sender report records `path`, so the share of
   relayed traffic is measurable before deciding whether port-mapping is
-  worth building.
+  worth building. (Connect tries a reversed connection before the
+  relay, see [PeerPayload Connect](#peerpayload-connect-in-development).)
 - **Relay on Render's free tier** spins down when idle, so the first
   relayed transfer after a quiet period waits for it to start, and its
   bandwidth allowance is limited. For real use, move the relay to a
@@ -441,6 +512,7 @@ protocol/              every wire format defined once (tickets, tokens, cards, e
 connect/core/          PeerPayload Connect client logic: identity, pairing, contacts, mailbox client, transfers
 connect/mailbox/       Connect's store-and-forward service for encrypted messages between devices
 connect/desktop/       Connect's Electron app
+connect/android/       Connect's Android app (Kotlin + Compose) and the engine's Android/JNI build
 render.yaml            Render Blueprint (backend + Postgres, relay)
 tools/                 test-all.js (npm test), benchmark harness, latency proxy, bench-log analysis
 docker-compose.yml     local Postgres + the old standalone backend/frontend pair (see frontend/ note)
