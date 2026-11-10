@@ -17,4 +17,7 @@ module.exports = {
   // A ticket only has to stay valid long enough to open the relay socket;
   // clients fetch a fresh one for every (re)connect.
   relayTicketTtlSec: Number(process.env.RELAY_TICKET_TTL_SEC) || 600,
+  // Requests per minute per client IP, all API routes together (server.js).
+  // An office shares one public IP, so this is per office, not per person.
+  rateLimitPerMinute: Number(process.env.RATE_LIMIT_PER_MINUTE) || 600,
 };

@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+const { rateLimit } = require("express-rate-limit");
 const http = require("http");
 const { Server: SocketIOServer } = require("socket.io");
 
@@ -27,6 +28,19 @@ app.use(express.json());
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 
+// Caps requests per client IP across the whole API, so a flood can't tie
+// up the database. Generous on purpose: an office behind one public IP
+// sends a heartbeat per person every 15 s. Login has its own, stricter
+// limiter for failed attempts (lib/loginLimiter). /health is above, so
+// Render's health checks never count.
+app.use(rateLimit({
+  windowMs: 60 * 1000,
+  limit: config.rateLimitPerMinute,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { error: "too many requests; try again shortly" },
+}));
+
 app.use("/auth", authRouter);
 app.use("/users", usersRouter);
 app.use("/presence", presenceRouter);
@@ -49,7 +63,9 @@ app.use((err, req, res, next) => {
     status = 400; // a value the schema rejects slipped past route validation
 
   if (status >= 500)
-    console.error(`${req.method} ${req.originalUrl} failed:`, err);
+    // The URL is an argument, not part of the format string: a client can
+    // put %s or %o in it.
+    console.error("%s %s failed:", req.method, req.originalUrl, err);
 
   if (res.headersSent)
     return;

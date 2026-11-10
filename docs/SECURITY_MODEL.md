@@ -131,7 +131,9 @@ Enterprise trusts its backend, run by the organisation:
 
 - **Accounts:** created by an admin, no self-registration. Passwords are
   hashed with bcrypt (cost 12). Failed logins are rate limited per IP
-  address and username, in memory per backend process.
+  address and username, in memory per backend process. All API requests
+  together are also capped per IP address (600 a minute by default,
+  `RATE_LIMIT_PER_MINUTE`); an office behind one public IP shares that.
 - **Sessions:** random tokens stored in the database, so an admin
   deactivating an account ends its sessions at once.
 - **Transfers:** the receiver makes a throwaway certificate for each
