@@ -242,6 +242,7 @@ function createTransferManager({
   const receivers = new Map(); // transferId -> engine handle, while receiving
   const senders = new Map(); // transferId -> engine handle, while sending
   const pausing = new Set(); // transferIds being paused (their engine exit isn't a failure)
+  const restarting = new Set(); // sender: stopped to re-offer, because the receiver asked to resume
   const resumeTimers = new Map(); // transferId -> timer, while a resume-request waits
   const enginePorts = new Map(); // transferId -> receiver engine port, while receiving
   const dialers = new Map(); // transferId -> reverse dialer, while receiving
@@ -420,6 +421,7 @@ function createTransferManager({
         },
         onRetry: ({ attempt, reason }) => update(t, { retry: { attempt, reason } }),
         onSpawn: (handle) => senders.set(t.transferId, handle),
+        isStopped: () => pausing.has(t.transferId),
       });
     } catch (err) {
       outcome = { error: err.message };
@@ -430,6 +432,10 @@ function createTransferManager({
 
     if (pausing.delete(t.transferId)) {
       update(t, { state: "interrupted", error: t.error ?? "paused", retry: undefined });
+
+      if (restarting.delete(t.transferId))
+        resume(t.transferId).catch((err) => log(`re-offering ${t.transferId} failed: ${err.message}`));
+
       return snapshot(t);
     }
 
@@ -802,11 +808,32 @@ function createTransferManager({
       }
 
       case "resume-request":
-        if (t && t.direction === "out" && t.peer === from && resumable(t))
+        // Deleted here, or never ours: say so, or the other side waits for
+        // an offer that will never come.
+        if (!t) {
+          sendTo(from, "cancel", { transferId: message.transferId, removed: true }).catch(() => {});
+          return true;
+        }
+
+        if (t.direction !== "out" || t.peer !== from)
+          return true;
+
+        if (resumable(t))
           resume(t.transferId).catch((err) => log(`resume of ${t.transferId} requested, but: ${err.message}`));
-        // Deleted here (or finished, or never ours): say so, or the other
-        // side waits for an offer that will never come.
-        else if (!t || (t.peer === from && t.direction === "out"))
+        // Both sides pressed Resume: our re-offer is already on its way.
+        else if (t.state === "offered") {
+          // nothing to do
+        }
+        // Still retrying a receiver that has stopped (its pause hadn't
+        // reached us): stop, then re-offer, which it accepts.
+        else if (t.state === "sending") {
+          restarting.add(t.transferId);
+
+          if (!stopRunning(t, `${t.peerName} asked to resume`))
+            restarting.delete(t.transferId);
+        }
+        // Finished, declined or removed here: nothing to resume.
+        else
           sendTo(from, "cancel", { transferId: message.transferId, removed: true }).catch(() => {});
 
         return true;

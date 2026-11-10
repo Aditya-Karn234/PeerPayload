@@ -148,6 +148,8 @@ class Transfers(
     private val waiters = HashMap<String, CompletableDeferred<Answer>>()
     private val engines = HashMap<String, EngineRun>() // running engine per transfer
     private val pausing = HashSet<String>()
+    // Sender: stopped to re-offer, because the receiver asked to resume.
+    private val restarting = mutableSetOf<String>()
     private val probeNotes = HashMap<String, String>() // transferId -> what the direct probe found, for failures
     private val enginePorts = HashMap<String, Int>() // receiver engine port, while receiving
     private val dialers = HashMap<String, ReverseDialer>() // reverse dialers, while receiving
@@ -357,6 +359,10 @@ class Transfers(
 
         if (synchronized(pausing) { pausing.remove(id) }) {
             update(id) { it.copy(state = "interrupted", error = it.error ?: "paused", retry = null) }
+
+            if (synchronized(restarting) { restarting.remove(id) })
+                runCatching { resume(id) }.onFailure { log("re-offering $id failed: ${it.message}") }
+
             return
         }
 
@@ -839,12 +845,26 @@ class Transfers(
             is Message.ResumeRequest -> {
                 val t = get(message.transferId)
 
-                if (t != null && t.direction == "out" && t.peer == from && t.resumable)
-                    runCatching { resume(t.transferId) }.onFailure { log("resume of ${t.transferId} requested, but: ${it.message}") }
-                // Deleted here (or finished, or never ours): say so, or the
-                // other side waits for an offer that will never come.
-                else if (t == null || (t.peer == from && t.direction == "out"))
-                    send(from, Message.Cancel(message.transferId, removed = true))
+                when {
+                    // Deleted here, or never ours: say so, or the other side
+                    // waits for an offer that will never come.
+                    t == null -> send(from, Message.Cancel(message.transferId, removed = true))
+                    t.direction != "out" || t.peer != from -> {}
+                    t.resumable ->
+                        runCatching { resume(t.transferId) }.onFailure { log("resume of ${t.transferId} requested, but: ${it.message}") }
+                    // Both sides pressed Resume: our re-offer is already on its way.
+                    t.state == "offered" -> {}
+                    // Still retrying a receiver that has stopped (its pause
+                    // hadn't reached us): stop, then re-offer, which it accepts.
+                    t.state == "sending" -> {
+                        synchronized(restarting) { restarting.add(t.transferId) }
+
+                        if (!stopRunning(t, "${t.peerName} asked to resume"))
+                            synchronized(restarting) { restarting.remove(t.transferId) }
+                    }
+                    // Finished, declined or removed here: nothing to resume.
+                    else -> send(from, Message.Cancel(message.transferId, removed = true))
+                }
             }
 
             else -> {}

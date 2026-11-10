@@ -229,6 +229,30 @@ test("relay: the direct link dies mid-transfer -> the sender switches to the rel
   assert.equal(h.sha256File(path.join(outDir, "big.bin")), h.sha256File(src));
 });
 
+test("runSender: a pause during the wait between attempts stops it, with no further attempt", async (t) => {
+  const { srcDir, outDir } = setup(t);
+  const src = h.writeRandomFile(path.join(srcDir, "f.bin"), 2 * 1024 * 1024, 27);
+  const { receiver, pin } = await startReceiverSide(t, outDir, "r8");
+  // The link dies after ~256 KiB: a retryable failure, so runSender waits
+  // and would try again. The caller pauses during that wait, when there's
+  // no engine process left to kill.
+  const proxy = await h.startFaultProxy({ upstreamPort: receiver.port, cutAfterBytes: 256 * 1024 });
+  t.after(() => proxy.close());
+
+  let paused = false;
+  const outcome = await runSender({
+    exePath: h.senderPath,
+    baseArgs: baseArgs("r8", pin, src),
+    target: { host: "127.0.0.1", port: proxy.port },
+    wait: async () => { paused = true; },
+    isStopped: () => paused,
+  });
+
+  assert.ok(paused, "the first attempt should have failed and waited to retry");
+  assert.equal(outcome.attempts, 1, "no attempt may start after the pause");
+  assert.equal(outcome.finalEvent.reason, "cancelled");
+});
+
 test("relay: no direct path and no working relay -> not_reachable", async (t) => {
   const { srcDir } = setup(t);
   const src = h.writeRandomFile(path.join(srcDir, "f.bin"), 10 * 1024, 25);

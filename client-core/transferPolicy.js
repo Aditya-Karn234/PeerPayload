@@ -92,6 +92,10 @@ const SWITCH_TO_RELAY_REASONS = new Set(["connection_failed", "tls_pin_mismatch"
 //   baseArgs engine args without -h/-p (token, id, chunk size, pin, path)
 //   relay    { getTicket } or null when the backend has no relay configured
 //   onSpawn  (handle) => void for each engine process started (to stop it)
+//   isStopped () => true once the caller has stopped this transfer (paused
+//            it): killing the engine only ends the current attempt, and
+//            between attempts there's no engine to kill, so the loop checks
+//            this before starting another
 async function runSender({
   exePath,
   baseArgs,
@@ -104,6 +108,7 @@ async function runSender({
   wait = sleep,
   probe = probeTcp,
   startBridge = startSenderBridge,
+  isStopped = () => false,
 }) {
   let connected = false;
   let failures = 0;
@@ -121,6 +126,9 @@ async function runSender({
 
   try {
     for (;;) {
+      if (isStopped())
+        return { finalEvent: { event: "transfer_failed", reason: "cancelled" }, attempts, connected, path };
+
       if (path !== "relay") {
         const reachable = await probe(target.host, target.port, DIRECT_PROBE_TIMEOUT_MS);
 

@@ -160,6 +160,27 @@ test("history: transfers running when the app stopped come back as interrupted; 
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "transfers.json"), "utf8")).length, 1, "and that's what's on disk");
 });
 
+test("resume: both sides tap Resume at once, and it still completes", async (t) => {
+  const { alice, bob } = await pairedDevices(t, "Iris", "Jude");
+  const { id, downloads } = await startThenPause(alice, bob, "sender");
+
+  // The sender's re-offer and the receiver's resume-request cross in the
+  // mailbox: each side gets the other's message mid-resume.
+  await Promise.all([bob.resume(id), alice.resume(id)]);
+  await until("complete on both sides, or ended", () => {
+    const a = alice.latest.get(id);
+    const b = bob.latest.get(id);
+    return (a.state === "complete" && b.state === "complete") || a.ended || b.ended;
+  }, 60000);
+
+  const received = alice.latest.get(id);
+  assert.ok(!received.ended, `the receiver's copy was ended: ${received.error}`);
+  assert.equal(received.state, "complete", received.error);
+  assert.equal(bob.latest.get(id).state, "complete");
+  assert.ok(received.progress.resumedBytes > 0, "continued from the bytes already there");
+  assert.equal(sha(path.join(downloads, "video.bin")), sha(bigFile));
+});
+
 test("resume: a pause that arrives after this side already failed still counts as a pause", () => {
   // Pausing stops that side's engine at once, but the message saying so goes
   // through the mailbox: the dropped connection can win, our side retries,
