@@ -139,7 +139,28 @@ function registerIpcHandlers() {
   ipcMain.handle("set-auto-accept", (event, value) => receiveListener.setAutoAccept(value));
 }
 
-app.whenReady().then(() => {
+// One running copy per data folder. Two copies share the one saved
+// sign-in, so signing in to a different account in one silently switched
+// the other too (it kept showing the old name while acting as the new
+// one). Launching again (shortcut, Start menu) shows the running window,
+// even from the tray.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock)
+  app.quit();
+else
+  app.on("second-instance", () => {
+    if (!mainWindow)
+      return;
+
+    if (mainWindow.isMinimized())
+      mainWindow.restore();
+
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
+if (gotSingleInstanceLock) app.whenReady().then(() => {
   receiveListener.init({ onSendToRenderer: sendToRenderer, onGetMainWindow: getMainWindow });
 
   const forceLogout = async () => {
