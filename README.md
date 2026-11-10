@@ -1,498 +1,63 @@
 # PeerPayload
 
-Send a file directly to a colleague's machine. Log in, pick their name from
-a list of who's online, and the transfer runs straight between the two of
-you — the file's bytes never pass through a server. A small backend only
-handles accounts, presence ("who's online right now"), and an audit trail
-of what was sent, to whom, and whether it finished.
+[![test](https://github.com/Aditya-Karn234/PeerPayload/actions/workflows/test.yml/badge.svg)](https://github.com/Aditya-Karn234/PeerPayload/actions/workflows/test.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Two ways to use it, sharing one implementation underneath:
+Send files straight from one device to another. The file's bytes go device
+to device over TLS, directly when the devices can reach each other and
+through a relay that only ever sees encrypted data when they can't.
 
-- **Desktop app** (Electron + React) — install it, sign in, pick a
-  colleague, send. Runs in the system tray so it can receive files in the
-  background.
-- **CLI** (`peerpayload`) — `login`, `send`, `status`, `history`. Send-only:
-  receiving still needs someone's desktop app running on the other end.
+Two products share one transfer engine:
 
-The C++ transfer engine underneath (`sender`/`receiver`) also works as a
-fully standalone pair of CLI binaries with no account system at all — see
-[How the engine works](#how-the-engine-works).
-
-## Architecture
-
-```mermaid
-flowchart TB
-    A["Alice — desktop app or CLI"] -->|"REST: login, resolve recipient,<br/>create transfer intent"| Backend
-    B["Bob — desktop app"] -->|"REST + WebSocket:<br/>heartbeat, accept/reject"| Backend
-    Backend["Backend<br/>Express + socket.io<br/>deployed on Render"]
-    Backend --> Postgres[("Postgres<br/>users, sessions, transfers (audit only)")]
-    Backend -.->|"push: incoming-transfer"| B
-    A ==>|spawns| SenderProc["sender<br/>C++ engine"]
-    B ==>|spawns| ReceiverProc["receiver<br/>C++ engine"]
-    SenderProc <-->|"direct TCP + TLS 1.3, chunked,<br/>SHA-256 per chunk — file bytes<br/>never touch the backend"| ReceiverProc
-    SenderProc -.->|"fallback when not directly reachable:<br/>WebSocket bridge, still end-to-end TLS"| Relay["Relay<br/>blind byte pipe"]
-    Relay -.-> ReceiverProc
-```
-
-This is a **control plane / data plane split**:
-
-- **Control plane** (through the backend): who you are, who's online, and
-  "does Bob want this file" — a REST API for everything except the live
-  push notification, which goes over an authenticated per-user socket.io
-  channel (`user:<id>` room).
-- **Data plane** (client-to-client): once Bob accepts, his client
-  spawns `receiver`, Alice's client spawns `sender`, and the two connect
-  to each other directly over TLS. The backend is never in this path and
-  never sees file contents — only a final self-reported "it worked" or
-  "it failed" for the audit log.
-- **Relay fallback** (for machines on different networks): Alice's client
-  first checks whether Bob's advertised address answers (3 s). If not, or
-  if it turns out to be a different machine (the certificate pin doesn't
-  match), the two clients carry the engine's bytes over WebSockets through
-  `relay/` instead. The engines don't change: each talks to a local bridge
-  (`client-core/relayBridge.js`). The relay only forwards the engines' TLS
-  stream, so it sees ciphertext, and the sender's certificate pin means it
-  can't impersonate Bob either. Access is by short-lived tickets the
-  backend signs for the two parties of a live transfer; the relay checks
-  the signature and needs no database. The sender's report records which
-  path was used (`direct` or `relay`).
-  The same relay also serves PeerPayload Connect, which has no backend:
-  there each device signs its own ticket with its device key
-  (format in `protocol/relayTickets.js`), naming the device it wants to meet. The
-  relay checks the certificate matches the claimed device ID and the
-  signature is valid, and only pairs two devices that name each other.
-  Because anyone can make a key pair, the relay caps connections per IP
-  address.
-
-### Components
-
-| Path | What it is |
-|---|---|
-| `sender/`, `receiver/`, `shared/` | The C++ engine — TLS, resumable, pipelined chunk transfer. No knowledge of accounts, backend, or either client. |
-| `backend/` | Express + Prisma/Postgres + socket.io. Auth (bearer tokens, DB-backed sessions so admin revocation is immediate), presence (heartbeat + TTL), directory lookup, and transfer audit records. Deployed on Render. |
-| `client-core/` | The one client-side implementation of "talk to the backend" and "spawn the engine and read its JSON event stream" — shared by both `desktop/` and `cli/` so there's exactly one copy of that logic. |
-| `desktop/` | Electron + React. `electron-builder` produces a Windows installer (NSIS) and a Linux AppImage. |
-| `cli/` | `peerpayload` — commander-based, `login`/`send`/`status`/`history`. |
-| `packages/ui/` | Presentational React components (`Meter`, `StatTile`, `StatusBadge`, `ThemeToggle`) shared between `desktop/` and (originally) `frontend/`. |
-| `frontend/` | **Legacy.** A React dashboard from before the accounts/presence rework — still assumes the old no-auth, manual host/port/token model and does not speak the current backend's API. Not part of the working system; kept in the repo but not wired up. |
-| `relay/` | Stateless WebSocket relay for transfers that can't connect directly. Pairs the two sides of a transfer by backend-signed ticket and forwards their bytes with flow control. Its own service, so relayed traffic never competes with the API. |
-| `render.yaml` | Render Blueprint — deploys `backend/` with its Postgres, and the relay as a separate service sharing a generated `RELAY_SECRET`. |
-
-## Using it
-
-The backend is already deployed; the client apps have its URL baked in at
-build time, so there's no server address to configure.
-
-**Desktop app:** install the built package for your platform, sign in with
-an account an admin created for you, and send. Receiving requires the app
-to be running (it can be minimized to the tray — closing the window
-doesn't quit it).
-
-**CLI:**
-
-```sh
-peerpayload login
-peerpayload send "C:\path\to\file-or-folder" --to someusername
-peerpayload status    # active transfers
-peerpayload history   # everything
-```
-
-Add `--json` to any command for machine-readable output.
-
-### Accounts
-
-There's no self-registration. The first admin account is created directly
-against the database:
-
-```sh
-cd backend
-node src/scripts/createAdmin.js <username> <password>
-```
-
-From there, an admin creates everyone else's accounts through the `users`
-API.
-
-### Running the backend locally
-
-```sh
-cd backend
-cp .env.example .env   # point DATABASE_URL at a local Postgres
-npm install
-npx prisma migrate dev
-npm run dev
-```
-
-Point a client at it instead of the deployed backend with
-`PEERPAYLOAD_SERVER=http://localhost:4000` (both the desktop app's dev
-build and the CLI read this env var; the desktop app's `electron-builder`
-config bakes in the production URL for a packaged install instead).
-
-## PeerPayload Connect (in development)
-
-The consumer edition, being built alongside the organisation tool (which
-continues as PeerPayload Enterprise). No accounts and no backend: each
-device makes its own key on first run, people add each other with a
-one-time invite link or QR code, and files go device to device over mutual
-TLS with those keys, directly or through the relay.
-
-- `connect/core/`: everything a Connect device does (`createConnectNode`);
-  the desktop app is a UI over it.
-- `connect/mailbox/`: store-and-forward for the small encrypted messages
-  (pairing, transfer offers) between devices that aren't both online. It
-  can't read them or forge them. Messages are kept in memory, or in SQLite
-  with `MAILBOX_DB=<file>` so they survive a restart.
-- `connect/desktop/`: the Electron app (0.2.5).
-- `connect/android/`: the Android app (0.1.3, Android 8+), described
-  [below](#android).
-
-To try it on one machine with two devices:
-
-```sh
-cd connect/mailbox && npm start                      # mailbox on :4300
-cd connect/desktop && npm install && npm run build
-CONNECT_USER_DATA=/tmp/alice PEERPAYLOAD_MAILBOX=http://localhost:4300 npx electron .
-CONNECT_USER_DATA=/tmp/bob   PEERPAYLOAD_MAILBOX=http://localhost:4300 npx electron .
-```
-
-`npm run test:ui` in `connect/desktop` drives two app windows through
-setup, pairing and a transfer.
-
-The app runs in the tray: closing the window keeps it receiving, offers
-and finished transfers show as notifications, and it can start when you
-sign in (tray menu, installed app only). On Windows the installed app
-opens `peerpayload://pair` links (from a browser, email or chat) on
-Devices with the link filled in. It's only added once you click Add device.
-
-Transfers can be paused from either side and resumed from either side,
-even after both apps restart. Each incoming transfer goes to its own
-staging folder (`<downloads>/.incoming/<id>`) and its files only move into
-the downloads folder once complete. History (the last 200 transfers) is
-saved in `<identity dir>/transfers.json`. A transfer that was running when
-the app stopped comes back as "interrupted".
-
-How a transfer connects, in order:
-
-1. **Direct:** the sender connects to the receiver's addresses.
-2. **Reversed:** if it can't (a firewall, mobile data, a laptop's own
-   hotspot), it asks the receiver to dial out to it instead. A one-time key
-   in the encrypted offer authenticates the dial. Older apps ignore the
-   request and the sender moves on after 8 s.
-3. **Relay:** the slowest option, limited by the slower side's upload.
-   Both apps show a hint under relayed transfers explaining why it happened
-   and what to change.
-
-The engines' pinned mutual TLS runs end to end on all three paths: the
-reversed and relay paths go through local bridges, so the engines never
-see the difference.
-
-Hosted services (Render free plan, `connect/render.yaml`, from `main`)
-are the app's defaults; either can be changed in Settings:
-
-- mailbox: `https://peerpayload-connect-mailbox.onrender.com`
-- relay: `wss://peerpayload-connect-relay.onrender.com/v1/connect`
-
-On the free plan they sleep after 15 minutes idle (about a minute to
-wake), and the mailbox keeps undelivered messages in memory only, so a
-restart drops them.
-
-Speed: direct transfers on a network run at about 130 MiB/s on one
-machine (1 MiB chunks; the engine's 64 KiB default managed 12-17 MiB/s).
-Between networks the limit is the internet connections themselves,
-usually the sender's upload: a relayed test ran at 0.23-0.37 MiB/s,
-matching that test machine's own ~3 Mbit/s upload, so the relay's
-capacity wasn't what was measured.
-
-### Android
-
-A native Kotlin app (Jetpack Compose, minSdk 26, targetSdk 35) that speaks
-the same protocol as the desktop app. It runs the same C++ engine,
-`libpeerpayload.so`, through a JNI bridge (`engine/jni/`). The protocol,
-mailbox client, relay and reverse bridges, and the transfer manager are
-Kotlin ports of the JavaScript ones.
-
-- Pairing: show an invite QR or link, scan one with the in-app scanner
-  (CameraX + ZXing; it reads only `peerpayload://pair` codes), or paste a
-  link. Tapping a pairing link opens the app.
-- Sending: pick files from a contact, or Share from any other app. Both go
-  through a review step (files, total size, recipient) before anything is
-  sent.
-- Receiving: offers show as a banner on every tab. Received files go to
-  `Downloads/PeerPayload`.
-- Running transfers show speed and time left, and can be paused, resumed
-  or removed as on the desktop.
-
-Building it, from `connect/android`:
-
-```sh
-# 1. The engine for arm64-v8a and x86_64 (NDK r27c, static OpenSSL), in Docker.
-#    Rerun after engine or JNI changes; the .so files are git-ignored.
-docker run --rm -v "<repo>:/src" -v pp-android-cache:/cache \
-  debian:bookworm bash /src/connect/android/engine/build-engine.sh
-
-# 2. The app, with JDK 17 and Gradle 8.11.1
-gradle :app:assembleDebug        # or :app:assembleRelease
-gradle :app:testDebugUnitTest    # then: node tools/check-kotlin.js
-```
-
-Release builds are signed only when `signing/keystore.properties` is
-present. That folder is git-ignored. Keep a backup of it somewhere else:
-without the key, no update can be installed over an APK that's already
-been shared. R8 shrinking keeps the APK at about 19 MB.
-
-Interop is tested both ways. `VectorsTest` checks the Kotlin code against
-vectors from the JavaScript reference (`tools/make-vectors.js`), and
-`tools/check-kotlin.js` opens envelopes sealed by Kotlin with the
-JavaScript code. Tested on a Galaxy A14 5G (Android 15) against the
-desktop app: pairing and transfers both ways over the same Wi-Fi, the
-laptop's hotspot (reversed) and the relay.
-
-Not done yet: no messaging, multi-device or revocation; no iOS.
-
-## How the engine works
-
-- **Resumable.** Interrupt a transfer (kill the process, lose the network)
-  and re-run the same sender command — it picks up from the last
-  chunk the receiver durably wrote, verified against both file size and
-  chunk size so a changed source file or a different `--chunk-size`
-  correctly restarts from scratch instead of producing a corrupted splice.
-- **Verified.** Every chunk is SHA-256 hashed by the sender and checked by
-  the receiver before being written and acknowledged.
-- **Pipelined.** A sliding window of chunks can be in flight at once,
-  handled by four cooperating threads (disk reader → hasher → network
-  sender, with a separate thread reading acks) instead of the naive
-  send-one-wait-for-its-ack-send-next approach. See
-  [Performance](#performance) for what this actually bought.
-- **Encrypted and pinned.** TLS 1.3 by default. The receiver generates one
-  self-signed certificate per run and publishes its SHA-256 fingerprint in
-  its `listening` event. The apps send that fingerprint to the backend when
-  accepting, and the sender passes it to `--pin-sha256`, so it refuses any
-  other certificate: a machine-in-the-middle can't stand in for the
-  receiver. Run standalone without `--pin-sha256`, the sender accepts any
-  certificate (encryption only, no receiver authentication).
-- **Fails instead of hanging.** Every send/recv has an idle timeout
-  (`--idle-timeout`, default 120 s), so a peer that vanishes without
-  closing the connection (sleep, Wi-Fi or VPN drop) ends the session with
-  `peer_timeout` instead of blocking forever. TCP keepalive is on, so NAT
-  state isn't expired mid-transfer.
-- **Resumes automatically under the apps.** The apps start the receiver
-  with `--max-retries 3 --listen-timeout 120`: after a network failure it
-  keeps listening (emitting `session_failed`, not `transfer_failed`) with
-  its resume state saved, and the desktop app or CLI re-runs the sender,
-  which picks up from the last durable chunk. The retry policy lives in
-  `client-core/transferPolicy.js`.
-- **Cross-platform.** The same source builds and runs natively on Windows
-  and Linux; sender and receiver interoperate in either direction
-  regardless of which platform each side is running on.
-- **IPv6 and IPv4.** The receiver listens dual-stack (one port, both
-  families; the `listening` event reports `ipv6`), and the sender accepts
-  IPv6 addresses (`::1` or `[::1]`) and hostnames of either family. Needed
-  for IPv6-only mobile networks. Addresses are tried one after another,
-  not raced, so a hostname whose first address silently drops packets
-  delays the next one by up to the 20 s connect limit.
-- **A hash mismatch aborts the session** rather than retrying the bad
-  chunk in place. Once chunks are pipelined, chunks after a bad one may
-  already be in flight or received by the time its failure is known, so a
-  clean single-chunk retry isn't possible without the receiver buffering
-  out-of-order chunks. Disconnecting and relying on resume is far less
-  code, and a real mismatch should be rare — TCP already checksums the
-  byte stream, so this mostly catches logic bugs, not routine transit
-  noise.
-
-### Device identities (PeerPayload Connect)
-
-`ppkeygen --out <dir> --name "Alice's laptop"` creates a device identity: an
-Ed25519 key (`device.key`, keep it private) and a self-signed certificate
-(`device.crt`) that never expires. Its SHA-256 fingerprint (`certSha256`) is
-the device's ID. Paired devices pin each other: the sender with
-`--pin-sha256 <receiver's ID>`, the receiver with `--peer-sha256 <sender's
-ID>`, both using `--cert`/`--key` for their own identity. That's mutual
-TLS with no certificate authority and no server vouching for anyone.
-`ppkeygen --show <dir>` prints an existing ID; it refuses to replace one
-without `--force`, because that changes the device ID. The Enterprise apps
-don't use any of this.
-
-### Using the engine as a library
-
-The same engine also builds as a library, `peerpayload` (`.dll`/`.so`), for
-apps that can't launch the `sender`/`receiver` programs; the Connect
-Android app uses it through JNI. The two programs are now just `main()`
-wrappers around that library, so there is one implementation either way.
-
-The C API (`engine/include/peerpayload.h`) takes the programs' exact
-command-line arguments and delivers their exact JSON events through a
-callback instead of stdout:
-
-```c
-pp_run *run = pp_run_new(on_event, user_data);
-const char *args[] = { "-p", "8080", "-o", "/data/received" };
-int rc = pp_run_receiver(run, 4, args);   /* blocks; 0 = success */
-pp_run_free(run);
-```
-
-Runs block, so call them from a worker thread. `pp_run_cancel` works from
-any thread at any stage (listening, connecting, mid-transfer) and ends the
-run promptly with `transfer_failed` / `cancelled`, keeping resume state.
-Several runs can be active in one process; each callback only sees its own
-events. `engine/test/lib_test.cpp` (built as `engine_lib_test`) covers this.
-
-### Running the engine standalone (no accounts, no backend)
-
-```sh
-# terminal 1
-receiver -p 8080 -o ./received
-
-# terminal 2
-sender -p 8080 ./some-file-or-directory
-```
-
-Both take `--help` for the full flag list. The ones worth knowing:
-
-| Flag | Applies to | What it does |
+| | PeerPayload Connect | PeerPayload Enterprise |
 |---|---|---|
-| `--chunk-size <bytes>` | sender | Bytes per chunk (default 64 KiB, range 4 KiB–8 MiB). Bigger chunks mean fewer round trips — see the performance section. |
-| `--window <n>` | sender | Chunks allowed in flight at once before waiting for an ack (default 16). |
-| `--bench <path>` | sender | Writes per-chunk stage timings (disk read / hash / send / ack) to a CSV. |
-| `--no-tls` | both | Skips the TLS handshake. Debug/benchmark only — both sides must set it, or the connection fails. |
-| `--token <token>` | both | Shared-secret handshake auth. This is what a transfer intent's `engineToken` fills in automatically when the engine is spawned by the desktop app or CLI. |
-| `--transfer-id <id>` | both | Tags every emitted JSON event; callers use this to correlate a sender/receiver pair to one transfer record. |
-| `--idle-timeout <sec>` | both | Give up when the peer is silent this long on any single send/recv (default 120, `0` = never). The failure reason is `peer_timeout`. |
-| `--pin-sha256 <hex>` | sender | Refuse the receiver unless its certificate's SHA-256 matches (the `certSha256` from the receiver's `listening` event). Fails with `tls_pin_mismatch`. |
-| `--max-retries <n>` | receiver | After a network-type session failure, keep listening for the sender to reconnect and resume, up to `n` times (default 0: exit on the first failure). |
-| `--listen-timeout <sec>` | receiver | Exit with `listen_timeout` if no sender connects within this long; re-armed after each retryable failure (default 0 = wait forever). |
-| `--cert <file>` `--key <file>` | both | Use a lasting device identity from `ppkeygen` instead of a throwaway certificate. The receiver's fingerprint then stays the same across runs; the sender presents it to receivers that require one. |
-| `--peer-sha256 <hex>` | receiver | Mutual TLS: only accept senders presenting a certificate with this fingerprint (repeat for each allowed device). Others are refused (`tls_peer_not_allowed`) and the receiver keeps listening. `session_start` reports the sender's `peerCertSha256`. |
+| For | Anyone: your own devices, friends, family | Teams in an organisation |
+| Accounts | None. Each device makes its own key; you pair devices with a one-time link or QR code | Admin-created accounts, a directory of who's online, an audit log |
+| Apps | Windows, Android (Linux AppImage coming) | Windows desktop (Linux AppImage configured), CLI |
+| Servers | A mailbox for small encrypted messages, and a relay | A backend with Postgres, and a relay |
+| Status | Early preview: desktop 0.2.5, Android 0.1.3 | Released: 1.2.0 |
+| Guide | [docs/CONNECT.md](docs/CONNECT.md) | [docs/ENTERPRISE.md](docs/ENTERPRISE.md) |
 
-## Performance
+## Downloads
 
-Replacing stop-and-wait chunk transfer with the sliding-window pipeline
-described above gave a **13–16× throughput improvement** at realistic
-network latency (20–50 ms round trip) — stop-and-wait is bound by
-`chunk_size / RTT`, a cost that's invisible on localhost and dominates
-completely over any real link, independent of file size.
+There's no public release yet: the first one (Connect for Android,
+Windows and Linux) is being prepared, with checksums and build
+attestations. Until then, build from source as described below.
 
-Chunk size turned out to matter even more: per-stage timing isolation
-(reading `--bench` output) found that neither disk (~500–650 MB/s) nor
-SHA-256 (~600–700 MB/s) were ever the bottleneck — it was the ack-listener
-thread's `recv()` calls, at roughly 2.9 ms each, which dominates total time
-once there are thousands of small chunks. Fewer, bigger chunks means
-proportionally fewer acks: pushing chunk size to the protocol maximum
-(8 MiB) reached **~200–290 MB/s**, roughly 10× the default 64 KiB result.
+## How it works
 
-TLS costs nothing measurable at the sizes tested, consistent with
-hardware-accelerated AES-GCM on modern CPUs.
+- **The engine** (`sender`, `receiver`, C++) moves the files: chunked,
+  SHA-256 verified per chunk, resumable, pipelined, over TLS with the other
+  side's certificate pinned. The apps run it as a program, or as a library
+  on Android. See [docs/ENGINE.md](docs/ENGINE.md).
+- **Connect** devices pin each other's keys (mutual TLS). A transfer tries
+  a direct connection, then has the receiver dial out to the sender, then
+  falls back to the relay. TLS runs end to end on all three.
+- **Enterprise** apps sign in to a backend that handles accounts, presence
+  and the audit log. The backend never sees file contents.
 
-Full methodology, all charts, the complete before/after data, and the
-known limitations of this benchmark (single machine, one pass per
-condition, no `iperf3`/`fio` baseline for a true I/O ceiling) are in the
-published report:
-**[Pipelining rework: throughput benchmark](https://claude.ai/code/artifact/c4dc1658-917e-4461-81ef-c57067192527)**
+What is and isn't protected, and against whom, is written down in
+[docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md).
 
-Reproduce it with `tools/benchmark.ps1` — see the script's own header
-comment for why latency is simulated with a small TCP proxy
-(`tools/latency-proxy.js`) rather than a `Sleep()` inside the receiver.
-(That harness predates the accounts/presence rework and drives the engine
-directly, standalone — it isn't affected by anything above it.)
+## Building and testing
 
-## Tests and diagnostics
+You need Node.js 22, CMake, a C++17 compiler and OpenSSL 3:
 
-Engine tests drive the real `sender`/`receiver` binaries over their JSON
-event stream, the same surface the desktop app and CLI use. Build the
-engine first; there are no npm dependencies:
+- **Windows:** MSYS2 MinGW64 at `C:\msys64` (or set `MINGW_BIN`), with
+  `mingw-w64-x86_64-gcc`, `-cmake`, `-make` and `-openssl`.
+- **Linux:** `sudo apt-get install cmake g++ libssl-dev`.
 
 ```sh
-node --test "tests/engine/*.test.js"
-```
-
-To build the engine and run every suite in the repo (engine library,
-engine, relay, Connect mailbox, Connect core) in one go, as CI does:
-
-```sh
-npm test               # builds first; on Windows MinGW64 must be at C:\msys64 (or set MINGW_BIN)
+npm test               # builds the engine, then runs every test suite
 npm run test:quick     # skip the build
 node tools/test-all.js --only relay,connect-core
 ```
 
-| Suite | Covers |
-|---|---|
-| `integrity.test.js` | Byte-identical output across empty/1-byte/chunk-boundary files, every chunk size 4 KiB–8 MiB, window sizes, TLS and plaintext, nested/unicode directories, multiple sources, and truncation of a stale longer destination file. |
-| `resume.test.js` | Link dropped mid-transfer (TLS and plaintext), receiver or sender process killed, repeated interruptions, partially finished directories, plus the cases that must restart from chunk 0 instead of resuming: changed file size, changed `--chunk-size`, deleted partial file, garbage or out-of-range `transfer.state`. |
-| `ipv6.test.js` | Dual-stack receiver: transfers to `::1` and `[::1]`, IPv4 senders shown as plain IPv4, hostnames resolving to both families, pinning over IPv6. Skipped on machines without IPv6 loopback. |
-| `identity.test.js` | `ppkeygen` (create, show, refuse to overwrite), stable receiver fingerprints with an identity, mutual TLS between paired devices (receiver learns the sender's ID), refusing senders with no certificate or an unknown one while staying up, several allowed devices, invalid flag combinations, and senders with an identity working against an Enterprise-style receiver. |
-| `relay.test.js` | Engines through the real relay and client bridges, including a Connect-style transfer (device identities, mutual TLS, device-signed tickets, no backend): an unreachable address goes via the relay (pinned, byte-identical), a reachable one never touches it, a wrong machine at the advertised address switches to the relay, a relay link dropped mid-transfer resumes, and no path at all reports `not_reachable`. The relay's own tests (`relay/test/`) cover tickets, pairing, reconnects and flow control. |
-| `robustness.test.js` | Idle timeouts (a frozen link fails both sides with `peer_timeout`; a silent connection is dropped while the receiver keeps listening), the listen deadline, the receiver retry window (survives a dropped link or a corrupted chunk and the re-run resumes; retry budget runs out), and certificate pinning (stable fingerprint, wrong pin refused, invalid pins rejected). |
-| `failure-injection.test.js` | No receiver, wrong or missing token, TLS/plaintext mismatch, port scans and garbage bytes (receiver must keep listening), invalid input, injected chunk corruption (`DTS_CORRUPT_CHUNK`), bit flips on the wire via a fault proxy, and a hostile raw-protocol sender: bad handshake fields, path traversal, out-of-order/oversized/missing chunks, wrong hashes. |
-
-Tests marked `todo` document known engine bugs (see
-[Known limitations](#known-limitations--out-of-scope)). They run and
-report, but don't fail the suite. Point the tests at a different build
-with `ENGINE_SENDER_PATH` / `ENGINE_RECEIVER_PATH`.
-
-When a transfer won't work on a particular machine, run the diagnostic:
-
-```sh
-node tools/diagnose.js                         # engine, loopback TLS transfer, network, backend, login
-node tools/diagnose.js --peer 10.0.0.12:52011  # also test reaching a peer's receiver port
-node tools/diagnose.js --offline --json        # skip backend checks; machine-readable output
-```
-
-It checks that the engine binaries load (a missing DLL makes them exit
-silently), runs a real loopback TLS transfer and verifies its SHA-256,
-lists the LAN address the desktop app will advertise, checks the backend's
-`/health` and whether the stored CLI login is still valid, and lists
-interrupted transfers waiting to resume. It never prints the stored token.
-It exits 1 if any check fails.
-
-## Known limitations / out of scope
-
-Some deliberate, some just not built yet:
-
-- **No self-registration or SSO.** Accounts are admin-created only
-  (`createAdmin.js` bootstraps the first one).
-- **Relay, not hole punching.** Machines that can't reach each other
-  directly always go through the relay; there's no NAT traversal or
-  router port-mapping (UPnP/NAT-PMP) yet. Relayed transfers are slower and
-  cost relay bandwidth. Each sender report records `path`, so the share of
-  relayed traffic is measurable before deciding whether port-mapping is
-  worth building. (Connect tries a reversed connection before the
-  relay, see [PeerPayload Connect](#peerpayload-connect-in-development).)
-- **Relay on Render's free tier** spins down when idle, so the first
-  relayed transfer after a quiet period waits for it to start, and its
-  bandwidth allowance is limited. For real use, move the relay to a
-  paid plan or a VPS and change `RELAY_URL`; nothing else changes.
-- **An unreachable receiver on an old client** (no relay bridge) makes
-  the sender wait for the relay pairing timeout (30 s) before reporting
-  `not_reachable`.
-- **The audit trail is client-self-reported, not tamper-proof.** Both
-  sides report their own outcome after a transfer; the sender's report
-  wins if they disagree. Fine for "did this generally work," not a
-  cryptographic guarantee.
-- **Certificate pinning trusts the backend.** The fingerprint the sender
-  pins to comes from the backend over HTTPS, so a compromised backend
-  could substitute its own. Standalone runs without `--pin-sha256` have no
-  receiver authentication at all.
-- **Login rate limiting is per process.** Failed logins are capped per
-  IP+username and per IP in memory; running several backend instances
-  would need a shared store.
-- **`frontend/` is stale and not part of the working system** — see the
-  Components table above.
-- **Render's free tier cold-starts** after ~15 minutes idle, adding
-  30–50s of latency to the first request after a quiet period. A
-  heartbeat can report "online" before the signaling socket that actually
-  delivers the incoming-transfer push has finished reconnecting.
-- **No `htonl`/`ntohl` byte-order handling on the wire protocol.** Every
-  platform this currently runs on (Windows and Linux, both x86-64) is
-  little-endian, so this is a real gap only for a future big-endian
-  target, not for anything deployed today.
-- **No zero-copy send.** Benchmark data showed disk read and hashing
-  aren't the bottleneck (see [Performance](#performance)), so the
-  optimization `TransmitFile`/`sendfile` would provide isn't where the
-  time actually goes.
-- **Resume doesn't fingerprint file content.** A resume is allowed when
-  the file size and chunk size match. If the source file is edited between
-  runs but stays the same size, resume splices old and new bytes into a
-  corrupted file and still reports success. Covered by a `todo` test in
-  `resume.test.js`.
-- **CI covers tests only.** `.github/workflows/test.yml` runs `npm test` on Windows and Linux for every push; it doesn't build or publish the desktop installer, and the backend has no automated tests.
+CI runs the same thing on Windows and Linux for every push. It doesn't
+build the apps or installers yet, and the Enterprise backend has no
+automated tests. Building each
+app is covered in its guide: [Connect](docs/CONNECT.md) (desktop and
+Android), [Enterprise](docs/ENTERPRISE.md) (backend, desktop, CLI).
 
 ## Project layout
 
@@ -512,7 +77,31 @@ connect/core/          PeerPayload Connect client logic: identity, pairing, cont
 connect/mailbox/       Connect's store-and-forward service for encrypted messages between devices
 connect/desktop/       Connect's Electron app
 connect/android/       Connect's Android app (Kotlin + Compose) and the engine's Android/JNI build
-render.yaml            Render Blueprint (backend + Postgres, relay)
+render.yaml            Render Blueprint for Enterprise (backend + Postgres, relay)
+connect/render.yaml    Render Blueprint for Connect (mailbox, relay)
+docs/                  product guides, engine, security model, decisions
 tools/                 test-all.js (npm test), benchmark harness, latency proxy, bench-log analysis
 docker-compose.yml     local Postgres + the old standalone backend/frontend pair (see frontend/ note)
 ```
+
+## Documentation
+
+- [docs/CONNECT.md](docs/CONNECT.md): PeerPayload Connect, desktop and Android
+- [docs/ENTERPRISE.md](docs/ENTERPRISE.md): PeerPayload Enterprise, backend, desktop and CLI
+- [docs/ENGINE.md](docs/ENGINE.md): the transfer engine, its flags, performance, tests and diagnostics
+- [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md): what's encrypted, who can see what, known limits
+- [docs/DECISIONS.md](docs/DECISIONS.md): decisions made while open-sourcing the project, and why
+
+## Security
+
+Please don't report vulnerabilities in public issues. See
+[SECURITY.md](SECURITY.md) for how to report one privately.
+
+## Contributing
+
+Bug reports, testing on your own devices and pull requests are welcome.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE).

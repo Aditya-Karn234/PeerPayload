@@ -5,14 +5,12 @@ Connect's first public release, with the reasoning at the time. Newest last.
 A decision that changes later gets a new entry that says what it replaces;
 old entries stay.
 
-Moves to `docs/DECISIONS.md` on `main` in Phase 1.
-
 ## Phases
 
 | Phase | What | Status |
 |---|---|---|
 | 0 | Decisions: repository, license, hosting, signing, builds | Done 2026-11-10 |
-| 1 | Open-source ready: license (done), one `main` with both products, README, security policy, security model, security pass | In progress |
+| 1 | Open-source ready: license (done), one `main` with both products (done), README and docs (done), test-data cleanup, license fields, security pass | In progress |
 | 2 | Three real builds (Android APK, Windows EXE, Linux AppImage) and a release workflow | Not started |
 | 3 | First public release, checksums, verification steps, download tracking, landing page | Not started |
 | 4 | Launch: demo, hosting upgrade, r/SideProject first, then wider | Not started |
