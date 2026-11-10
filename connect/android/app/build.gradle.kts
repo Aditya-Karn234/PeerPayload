@@ -15,8 +15,8 @@ android {
         applicationId = "com.peerpayload.connect"
         minSdk = 26 // Android 8.0; the engine is built for this API level
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.1.4"
+        versionCode = 6
+        versionName = "0.1.5"
 
         ndk {
             // Phones, and the x86_64 emulator. Must match engine/build-engine.sh.
@@ -67,6 +67,8 @@ android {
     packaging {
         // BouncyCastle's jars each carry the same JPMS/OSGi metadata.
         resources.excludes += listOf("META-INF/versions/9/OSGI-INF/MANIFEST.MF", "META-INF/versions/*/module-info.class")
+        // Since 1.86 each also carries the same licence text: keep one copy.
+        resources.pickFirsts += "META-INF/LICENSE.md"
     }
 }
 
@@ -85,8 +87,8 @@ dependencies {
 
     // Ed25519 / X25519 / HKDF and X.509 parsing, identical on every Android
     // version (the platform's own support varies).
-    implementation("org.bouncycastle:bcprov-jdk18on:1.80")
-    implementation("org.bouncycastle:bcpkix-jdk18on:1.80")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.86")
     // Mailbox: HTTPS POSTs and the inbox WebSocket.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // Pairing QR codes: ZXing draws them and decodes camera frames from
