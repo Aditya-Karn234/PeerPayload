@@ -12,15 +12,16 @@ services:
     name: orgxfer-backend
     runtime: node
     plan: free
-    rootDir: backend
-    # protocol/ (shared wire formats) is a file: dependency; redeploy when
-    # it changes too, not only backend/.
+    # Builds from the repo root, not rootDir: backend: protocol/ (shared
+    # wire formats) is a file: dependency outside backend/, and Render makes
+    # nothing outside a service's rootDir available. Redeploys when either
+    # changes.
     buildFilter:
       paths:
         - backend/**
         - protocol/**
-    buildCommand: npm install && npx prisma generate
-    startCommand: npx prisma migrate deploy && npm start
+    buildCommand: cd backend && npm install && npx prisma generate
+    startCommand: cd backend && npx prisma migrate deploy && npm start
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -52,13 +53,13 @@ services:
     name: orgxfer-relay
     runtime: node
     plan: free
-    rootDir: relay
+    # From the repo root for the same reason as the backend (protocol/).
     buildFilter:
       paths:
         - relay/**
         - protocol/**
-    buildCommand: npm install
-    startCommand: npm start
+    buildCommand: cd relay && npm install
+    startCommand: cd relay && npm start
     healthCheckPath: /health
     envVars:
       - key: RELAY_SECRET

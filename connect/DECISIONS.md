@@ -124,3 +124,9 @@ Why: visitors land on `main`, which until now held only Enterprise.
 `connect-foundation` already contains everything Enterprise has (as
 equivalent commits), so merging it loses nothing. All tests run before the
 merge is pushed.
+
+Done 2026-11-10. Found while merging: Enterprise's backend and relay on
+Render set `rootDir`, but now depend on `protocol/` outside it, and Render
+makes nothing outside a service's `rootDir` available. Both now build and
+start from the repository root (`cd backend && ...`), as Connect's services
+already did. Checked with a fresh clone running the same commands.
