@@ -1,13 +1,17 @@
 package com.peerpayload.connect
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -33,12 +37,30 @@ class MainActivity : ComponentActivity() {
         setContent {
             val transfers by vm.transfers.collectAsState()
             val running = transfers.any { it.state == "sending" || it.state == "receiving" }
+            val offered = transfers.any { it.direction == "in" && it.state == "offered" }
 
-            // v1 transfers only while the app is open: keep the screen (and
-            // with it the network) awake while one runs.
+            // While the app is on screen during a transfer, the screen stays
+            // on too. Off screen, ConnectService keeps the transfer going.
             LaunchedEffect(running) {
                 if (running) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+
+            // Android 13+: ask once, the first time notifications would
+            // matter (a transfer's progress, an offer), so they can show
+            // when the app isn't on screen. "Stay ready to receive" asks
+            // on its own.
+            val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
+            LaunchedEffect(running || offered) {
+                val prefs = getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+                if ((running || offered) && Build.VERSION.SDK_INT >= 33 && !prefs.getBoolean("askedNotifications", false)) {
+                    prefs.edit().putBoolean("askedNotifications", true).apply()
+
+                    if (!(application as ConnectApp).notifications.allowed())
+                        askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
             }
 
             ConnectTheme {

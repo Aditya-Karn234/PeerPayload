@@ -23,8 +23,11 @@ Where the keys are stored:
 - **Desktop:** in the app's data folder. On Linux the files are created
   readable by the owner only (mode 600). On Windows that mode has no effect,
   and the files are protected only by the user profile's normal permissions.
-- **Android:** in app-private storage. Android backup is turned off for the
-  app, so the keys aren't copied into device or cloud backups.
+- **Android:** in app-private storage. Backup and data extraction are off
+  for the app, so the keys aren't copied into cloud backups or onto a new
+  phone during device-to-device transfer (Android 12+ needs the
+  `dataExtractionRules` file for the latter). A new phone is a new device:
+  pair it again.
 
 Anyone who can read those files (another program running as you, malware,
 someone with your unlocked device) can act as that device.

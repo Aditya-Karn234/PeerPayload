@@ -13,7 +13,7 @@ TLS with those keys, directly or through the relay.
   can't read them or forge them. Messages are kept in memory, or in SQLite
   with `MAILBOX_DB=<file>` so they survive a restart.
 - `connect/desktop/`: the Electron app (0.2.5).
-- `connect/android/`: the Android app (0.1.3, Android 8+), described
+- `connect/android/`: the Android app (0.1.4, Android 8+), described
   [below](#android).
 
 ## Running it from source
@@ -99,6 +99,17 @@ Kotlin ports of the JavaScript ones.
   `Downloads/PeerPayload`.
 - Running transfers show speed and time left, and can be paused, resumed
   or removed as on the desktop.
+- Transfers keep going when you switch to another app: a foreground service
+  with a progress notification (and a Pause button) runs while one does,
+  and holds the CPU awake only while bytes are moving. Android 15 allows
+  this 6 hours a day.
+- **Stay ready to receive** (Device tab, off by default): keeps the mailbox
+  connection in the background, so an offer arrives as a notification with
+  Accept and Decline even when the app is closed, and comes back after a
+  restart. It shows a small permanent notification, uses some battery, and
+  asks to be exempt from battery optimisation (Samsung phones also need
+  Battery set to Unrestricted). No push service is involved. Off, offers
+  arrive only while the app is running.
 
 Building it, from `connect/android`:
 

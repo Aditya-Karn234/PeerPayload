@@ -6,10 +6,27 @@
     <!-- Only to scan pairing QR codes; asked for the first time you scan. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <!-- Notifications: incoming offers, transfer progress, finished transfers.
+         Android 13+ asks the first time. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- ConnectService: keeps transfers (dataSync) and, if you turn on "Stay
+         ready to receive", the mailbox connection (specialUse) running while
+         the app isn't on screen. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Keeps the CPU awake with the screen off, only while bytes move. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Back to "ready to receive" after a restart, if it was on. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Lets the app ask to be left out of battery optimisation when you turn
+         on "Stay ready to receive" (you confirm it in a system dialog). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:name=".app.ConnectApp"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
@@ -43,5 +60,27 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".app.ConnectService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Optional, user-enabled 'Stay ready to receive': keeps an encrypted connection to the user's message mailbox so files that paired devices send arrive as a notification. No push service is used." />
+        </service>
+
+        <receiver
+            android:name=".app.NotificationActionReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".app.StartupReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

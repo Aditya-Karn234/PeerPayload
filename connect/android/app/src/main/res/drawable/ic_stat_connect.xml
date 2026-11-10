@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon: Android draws it in one colour, so it's a plain shape
+     (two opposing arrows: sending and receiving). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7,3L2.5,7.5L4,9L6,7V16H8V7L10,9L11.5,7.5Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M17,21L21.5,16.5L20,15L18,17V8H16V17L14,15L12.5,16.5Z" />
+</vector>

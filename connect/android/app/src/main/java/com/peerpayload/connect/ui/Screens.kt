@@ -1,11 +1,16 @@
 package com.peerpayload.connect.ui
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -43,6 +48,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -96,6 +102,66 @@ private val STATE_LABEL = mapOf(
     "complete" to "Complete", "failed" to "Failed", "cancelled" to "Cancelled", "declined" to "Declined",
     "timed_out" to "No answer", "interrupted" to "Paused",
 )
+
+// "Stay ready to receive": ConnectService keeps the mailbox connection in
+// the background so offers arrive as notifications. Turning it on asks for
+// notifications (Android 13+) and then to be left out of battery
+// optimisation, without which a dozing phone holds offers back.
+@SuppressLint("BatteryLife")
+@Composable
+private fun ReadyToReceivePanel(vm: ConnectViewModel) {
+    val ready by vm.readyToReceive.collectAsState()
+    val context = LocalContext.current
+    val t = LocalTokens.current
+
+    fun askBatteryExemption() {
+        val power = context.getSystemService(PowerManager::class.java)
+
+        if (!power.isIgnoringBatteryOptimizations(context.packageName))
+            runCatching {
+                context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}")))
+            }
+    }
+
+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        vm.setReadyToReceive(true)
+
+        if (!granted)
+            vm.message.value = "Notifications are off: offers will only show in the app. Allow them in Settings to get alerts."
+
+        askBatteryExemption()
+    }
+
+    fun turnOn() {
+        if (Build.VERSION.SDK_INT >= 33)
+            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        else {
+            vm.setReadyToReceive(true)
+            askBatteryExemption()
+        }
+    }
+
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Stay ready to receive", fontWeight = FontWeight.SemiBold, color = t.ink)
+                Text(
+                    if (ready) "Offers arrive as notifications even when the app is closed."
+                    else "Off: offers arrive only while the app is open.",
+                    fontSize = 13.sp, color = t.inkSecondary,
+                )
+            }
+            Switch(ready, { on -> if (on) turnOn() else vm.setReadyToReceive(false) })
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Keeps a small notification while on, and uses some battery. On Samsung phones, also set " +
+                "Settings › Apps › PeerPayload Connect › Battery to Unrestricted. Transfers keep going " +
+                "when you switch apps either way.",
+            fontSize = 12.sp, color = t.inkMuted,
+        )
+    }
+}
 
 // ---- building blocks ----
 
@@ -611,12 +677,8 @@ private fun DeviceScreen(vm: ConnectViewModel) {
                 Spacer(Modifier.width(8.dp))
                 Text(if (status.connected) "Connected: offers and pairings arrive now" else "Not connected: retrying", color = t.inkSecondary)
             }
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "Receives only while the app is open (v1). Keep it on screen during big transfers.",
-                fontSize = 13.sp, color = t.inkMuted,
-            )
         }
+        ReadyToReceivePanel(vm)
         Panel {
             Label("Engine")
             Text("Wire protocol ${NativeEngine.protocolVersion()}", fontFamily = Mono, fontSize = 13.sp, color = t.inkSecondary)

@@ -39,6 +39,9 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
     val contacts: StateFlow<List<Contact>> = node.contactList
     val transfers: StateFlow<List<Transfer>> = node.transfers
     val paired: MutableStateFlow<Contact?> = node.paired
+    val readyToReceive: StateFlow<Boolean> = connect.readyToReceive
+
+    fun setReadyToReceive(on: Boolean) = connect.setReadyToReceive(on)
 
     /** Speed / time left of running transfers, refreshed on progress and every second (so a stall shows). */
     val rates: StateFlow<Map<String, Rate>> = combine(transfers, flow { while (true) { emit(Unit); delay(1000) } }) { list, _ -> meter.update(list) }

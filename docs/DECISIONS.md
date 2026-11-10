@@ -10,7 +10,7 @@ old entries stay.
 | Phase | What | Status |
 |---|---|---|
 | 0 | Decisions: repository, license, hosting, signing, builds | Done 2026-11-10 |
-| 1 | Open-source ready: license, one `main`, README and docs, security scanning and first fixes (all done); Electron upgrade, test-data cleanup, license fields (to do) | In progress |
+| 1 | Open-source ready: license, one `main`, README and docs, security scanning and first fixes (all done); Electron upgrade, Android background work (testing); test-data cleanup, license fields (to do) | In progress |
 | 2 | Three real builds (Android APK, Windows EXE, Linux AppImage) and a release workflow | Not started |
 | 3 | First public release, checksums, verification steps, download tracking, landing page | Not started |
 | 4 | Launch: demo, hosting upgrade, r/SideProject first, then wider | Not started |
@@ -187,4 +187,37 @@ objects) inside Prisma's command-line tool. The fix exists only in Prisma
 configuration while running database migrations at deploy, so no outside
 input reaches it. Dismissed on GitHub as "vulnerable code not used";
 revisit with the next Prisma major upgrade.
+
+### D12. Android transfers keep running in the background (2026-11-10)
+
+Reported from use: switching to another app during a transfer on the phone
+stopped it, because Android cuts a backgrounded app's network. The app now
+runs a foreground service (type `dataSync`) while a transfer moves bytes or
+an offer it sent waits for an answer, with a progress notification and a
+Pause button. It holds a partial wake lock only while bytes move. Android 15
+limits this service type to 6 hours a day; transfers are far shorter.
+
+### D13. Offer notifications: an opt-in "Stay ready to receive", not push (2026-11-10)
+
+Asked for: a notification when a paired device wants to send files. Offers
+wait 10 minutes for an answer, so periodic checks (at most every 15 minutes
+on Android) would miss them. The two real options:
+
+- **Chosen:** an opt-in switch that keeps the mailbox connection alive in a
+  foreground service (type `specialUse`), so offers arrive at once as
+  notifications with Accept and Decline. Costs a permanent small
+  notification and some battery; asks for a battery-optimisation exemption.
+- **Not chosen:** push notifications through Firebase. Better for battery,
+  but needs Google Play services and a Firebase project with Google
+  credentials on the mailbox, lets Google see when a device gets messages,
+  and rules out F-Droid. It also goes against why the QR scanner moved off
+  Play services.
+
+Off by default. With it off, offers still notify while the app is running.
+Google Play (Phase 5) will ask for a justification of the `specialUse`
+service; it's declared in the manifest.
+
+Found on the way: on Android 12+, `allowBackup="false"` no longer stops
+device-to-device transfer, which could copy the device's private keys to a
+new phone. Added `dataExtractionRules` excluding everything.
 

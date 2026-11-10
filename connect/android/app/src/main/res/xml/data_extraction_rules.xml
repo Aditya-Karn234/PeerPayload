@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+: nothing of this app is copied anywhere, neither to a cloud
+     backup nor to a new phone during device-to-device transfer. The device
+     identity (its private keys) must stay on this one device: a copy would
+     be a second phone with the same device ID. allowBackup="false" alone no
+     longer stops device-to-device transfer on Android 12+. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>
