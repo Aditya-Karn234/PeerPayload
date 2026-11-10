@@ -87,6 +87,9 @@ function registerIpcHandlers() {
     await getApiClient().logout();
   });
 
+  ipcMain.handle("change-password", (event, { currentPassword, newPassword }) =>
+    getApiClient().changePassword(currentPassword, newPassword));
+
   ipcMain.handle("get-me", async () => {
     const stored = getTokenStore().get();
 

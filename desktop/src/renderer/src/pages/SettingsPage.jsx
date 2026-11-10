@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, Info, LogOut, SlidersHorizontal, UserRound } from "lucide-react";
-import { Button, Mono, SectionLabel, Select, TextInput, Toggle, getThemePreference, setThemePreference } from "@peerpayload/ui";
+import { FolderOpen, Info, KeyRound, LogOut, SlidersHorizontal, UserRound } from "lucide-react";
+import { Button, Field, Mono, SectionLabel, Select, TextInput, Toggle, getThemePreference, setThemePreference } from "@peerpayload/ui";
 
 const SECTIONS = [
   { id: "general", label: "General", icon: SlidersHorizontal },
@@ -104,6 +104,7 @@ function Account({ user, d }) {
         <Row title="Signed in as" description="Your organisation account. An administrator manages accounts.">
           <Mono className="text-sm">{user.username}</Mono>
         </Row>
+        <ChangePassword />
         <Row title="Sign out" description="Incoming transfers stop reaching this computer until you sign in again.">
           <Button variant="secondary" icon={LogOut} onClick={d.logout}>
             Sign out
@@ -111,6 +112,70 @@ function Account({ user, d }) {
         </Row>
       </div>
     </>
+  );
+}
+
+// Electron prefixes errors from the main process; show only the server's message.
+const cleanError = (err) => String(err?.message ?? err).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
+
+function ChangePassword() {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState(null);
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError(null);
+    setDone(false);
+
+    if (next.length < 8)
+      return setError("The new password must be at least 8 characters.");
+
+    if (next !== confirm)
+      return setError("The new passwords don't match.");
+
+    setBusy(true);
+
+    try {
+      await window.peerpayload.changePassword(current, next);
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+      setDone(true);
+    } catch (err) {
+      setError(cleanError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="border-b border-[var(--color-border)] py-4">
+      <p className="text-sm font-medium">Change password</p>
+      <p className="mt-0.5 text-xs text-[var(--color-ink-secondary)]">
+        At least 8 characters. Your other signed-in computers are signed out; this one stays signed in.
+      </p>
+      <div className="mt-3 grid max-w-sm gap-3">
+        <Field label="Current password">
+          <TextInput type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" required />
+        </Field>
+        <Field label="New password">
+          <TextInput type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" required />
+        </Field>
+        <Field label="Confirm new password" error={error}>
+          <TextInput type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" required />
+        </Field>
+        <div className="flex items-center gap-3">
+          <Button type="submit" variant="secondary" icon={KeyRound} disabled={busy}>
+            {busy ? "Changing…" : "Change password"}
+          </Button>
+          {done && <span role="status" className="text-xs text-[var(--color-good)]">Password changed.</span>}
+        </div>
+      </div>
+    </form>
   );
 }
 

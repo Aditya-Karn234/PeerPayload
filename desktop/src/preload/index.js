@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("peerpayload", {
   login: (username, password) => ipcRenderer.invoke("login", { username, password }),
   logout: () => ipcRenderer.invoke("logout"),
   getMe: () => ipcRenderer.invoke("get-me"),
+  changePassword: (currentPassword, newPassword) => ipcRenderer.invoke("change-password", { currentPassword, newPassword }),
 
   listTransfers: () => ipcRenderer.invoke("list-transfers"),
   getTransfer: (id) => ipcRenderer.invoke("get-transfer", id),
