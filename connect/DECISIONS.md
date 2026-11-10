@@ -130,3 +130,8 @@ Render set `rootDir`, but now depend on `protocol/` outside it, and Render
 makes nothing outside a service's `rootDir` available. Both now build and
 start from the repository root (`cd backend && ...`), as Connect's services
 already did. Checked with a fresh clone running the same commands.
+
+Render now runs two Blueprints, both from `main`: `PeerPayload` (root
+`render.yaml`: Enterprise backend, relay, database) and
+`PeerPayload-connect` (`connect/render.yaml`: Connect mailbox, relay).
+`connect-foundation` was deleted once both pointed at `main`.
