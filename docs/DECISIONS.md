@@ -10,7 +10,7 @@ old entries stay.
 | Phase | What | Status |
 |---|---|---|
 | 0 | Decisions: repository, license, hosting, signing, builds | Done 2026-11-10 |
-| 1 | Open-source ready: license (done), one `main` with both products (done), README and docs (done), test-data cleanup, license fields, security pass | In progress |
+| 1 | Open-source ready: license, one `main`, README and docs, security scanning and first fixes (all done); Electron upgrade, test-data cleanup, license fields (to do) | In progress |
 | 2 | Three real builds (Android APK, Windows EXE, Linux AppImage) and a release workflow | Not started |
 | 3 | First public release, checksums, verification steps, download tracking, landing page | Not started |
 | 4 | Launch: demo, hosting upgrade, r/SideProject first, then wider | Not started |
@@ -133,3 +133,53 @@ Render now runs two Blueprints, both from `main`: `PeerPayload` (root
 `render.yaml`: Enterprise backend, relay, database) and
 `PeerPayload-connect` (`connect/render.yaml`: Connect mailbox, relay).
 `connect-foundation` was deleted once both pointed at `main`.
+
+### D9. GitHub's own security features, not separate tools (2026-11-10)
+
+Turned on in the repository settings: private vulnerability reporting
+(where `SECURITY.md` sends reports), Dependabot alerts and grouped
+security updates, secret scanning with push protection, and CodeQL code
+scanning. CodeQL runs from `.github/workflows/codeql.yml` rather than
+GitHub's default setup, which couldn't build the Android app (it looks
+for build files only at the repository root). Dependabot version updates
+stay off: security updates only, to keep the noise down.
+
+Why: they cover what Phase 1 planned to add separately (a secret scanner,
+a code scanner, dependency audits) and run on every push without
+maintenance.
+
+### D10. Remove the legacy `frontend/` (2026-11-10)
+
+The old web dashboard from before accounts existed. It didn't work with
+the current backend and nothing used it, but its outdated dependencies
+produced Dependabot alerts and pull requests. Deleted, along with its
+Docker Compose service. It remains in the git history.
+
+### D11. Fixing the first security findings (2026-11-10)
+
+The first scans found 156 Dependabot alerts and 12 CodeQL alerts. In
+order of risk:
+
+1. **Enterprise backend, live and public.** Patched within the same major
+   versions: proxy-addr (critical), body-parser, engine.io, qs. Added a
+   per-IP rate limit to every API route. Fixed a log call that used the
+   request URL as a format string. Done.
+2. **Connect: quadratic-time regex** on mailbox URLs, which arrive in other
+   people's pairing links (100,000 slashes froze the app for 16 s).
+   Replaced with a loop. Done; it reaches users with the next desktop
+   release.
+3. **`frontend/`:** removed (D10).
+4. **Electron 33 in both desktop apps**, out of support: most of the
+   remaining alerts. Upgrade both apps together with the build tools
+   (vite, electron-builder), then release Connect desktop 0.2.6 and
+   Enterprise 1.2.1. Dependabot's grouped pull request jumps straight to
+   Electron 42 and vite 8 untested, so it is replaced by this work rather
+   than merged. Next.
+
+Accepted, not fixed: **deepmerge-ts** (stack exhaustion on recursive
+objects) inside Prisma's command-line tool. The fix exists only in Prisma
+8, two major versions up. The tool only merges the project's own
+configuration while running database migrations at deploy, so no outside
+input reaches it. Dismissed on GitHub as "vulnerable code not used";
+revisit with the next Prisma major upgrade.
+

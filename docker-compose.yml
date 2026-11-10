@@ -44,15 +44,5 @@ services:
       # the files are visible from outside the container too.
       - ./data:/data
 
-  frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
-    container_name: dts_frontend
-    ports:
-      - "8080:80"
-    depends_on:
-      - backend
-
 volumes:
   pgdata:

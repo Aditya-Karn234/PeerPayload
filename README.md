@@ -70,7 +70,6 @@ client-core/           shared client logic (API calls, engine spawning) used by 
 desktop/               Electron + React desktop app
 cli/                   peerpayload command-line client
 packages/ui/           shared presentational React components
-frontend/              legacy web dashboard — not wired to the current backend, see Known limitations
 relay/                 stateless WebSocket relay for transfers that can't connect directly
 protocol/              every wire format defined once (tickets, tokens, cards, envelopes, Connect messages)
 connect/core/          PeerPayload Connect client logic: identity, pairing, contacts, mailbox client, transfers
@@ -81,7 +80,7 @@ render.yaml            Render Blueprint for Enterprise (backend + Postgres, rela
 connect/render.yaml    Render Blueprint for Connect (mailbox, relay)
 docs/                  product guides, engine, security model, decisions
 tools/                 test-all.js (npm test), benchmark harness, latency proxy, bench-log analysis
-docker-compose.yml     local Postgres + the old standalone backend/frontend pair (see frontend/ note)
+docker-compose.yml     local Postgres, and the backend in Docker
 ```
 
 ## Documentation

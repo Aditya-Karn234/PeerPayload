@@ -17,11 +17,10 @@ received.txt
 *.user
 Thumbs.db
 
-# Node / backend / frontend / desktop
+# Node / backend / desktop
 node_modules/
 backend/.env
 backend/dist/
-frontend/dist/
 desktop/dist/
 connect/desktop/dist/
 npm-debug.log*

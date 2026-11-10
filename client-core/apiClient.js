@@ -1,6 +1,6 @@
 // The one client-side implementation of "talk to the backend" — the CLI
 // and (from Phase 4) the desktop app both construct one of these and never
-// touch fetch/auth headers directly. Mirrors frontend/src/lib/api.js's
+// touch fetch/auth headers directly. Mirrors the old web dashboard's (removed)
 // request() pattern, but takes an explicit baseUrl (no Vite dev-proxy to
 // lean on outside a browser) and a pluggable tokenStore instead of a
 // browser-managed cookie/session.

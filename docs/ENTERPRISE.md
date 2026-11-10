@@ -75,8 +75,7 @@ This is a **control plane / data plane split**:
 | `client-core/` | The one client-side implementation of "talk to the backend" and "spawn the engine and read its JSON event stream" — shared by both `desktop/` and `cli/` so there's exactly one copy of that logic. |
 | `desktop/` | Electron + React. `electron-builder` produces a Windows installer (NSIS) and a Linux AppImage. |
 | `cli/` | `peerpayload` — commander-based, `login`/`send`/`status`/`history`. |
-| `packages/ui/` | Presentational React components (`Meter`, `StatTile`, `StatusBadge`, `ThemeToggle`) shared between `desktop/` and (originally) `frontend/`. |
-| `frontend/` | **Legacy.** A React dashboard from before the accounts/presence rework — still assumes the old no-auth, manual host/port/token model and does not speak the current backend's API. Not part of the working system; kept in the repo but not wired up. |
+| `packages/ui/` | Presentational React components (`Meter`, `StatTile`, `StatusBadge`, `ThemeToggle`) shared by the desktop apps. |
 | `relay/` | Stateless WebSocket relay for transfers that can't connect directly. Pairs the two sides of a transfer by backend-signed ticket and forwards their bytes with flow control. Its own service, so relayed traffic never competes with the API. |
 | `render.yaml` | Render Blueprint — deploys `backend/` with its Postgres, and the relay as a separate service sharing a generated `RELAY_SECRET`. |
 
@@ -158,8 +157,6 @@ config bakes in the production URL for a packaged install instead).
 - **Login rate limiting is per process.** Failed logins are capped per
   IP+username and per IP in memory; running several backend instances
   would need a shared store.
-- **`frontend/` is stale and not part of the working system** — see the
-  Components table above.
 - **Render's free tier cold-starts** after ~15 minutes idle, adding
   30–50s of latency to the first request after a quiet period. A
   heartbeat can report "online" before the signaling socket that actually
