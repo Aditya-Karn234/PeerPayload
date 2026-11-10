@@ -48,7 +48,8 @@ function splice(tcp, ws) {
   });
 
   ws.on("message", (data, isBinary) => {
-    if (!isBinary)
+    // Nothing to deliver to once the engine's side is gone.
+    if (!isBinary || tcp.destroyed)
       return;
 
     if (!tcp.write(data)) {
@@ -60,7 +61,13 @@ function splice(tcp, ws) {
   // end() rather than destroy() so bytes still queued (the receiver's last
   // FileDone, say) reach the engine before the connection closes.
   ws.on("close", () => tcp.end());
-  tcp.on("close", () => ws.close(1000));
+  // Resume first: a socket paused for back-pressure (whose "drain" will now
+  // never come) wouldn't read the relay's close frame, and would linger
+  // until ws's 30 s close timeout.
+  tcp.on("close", () => {
+    ws.resume();
+    ws.close(1000);
+  });
   tcp.on("error", () => ws.terminate());
 }
 
@@ -149,7 +156,9 @@ async function startSenderBridge({ getTicket, log = () => {} }) {
 // pairs, connects to the local receiver engine and splices; when that
 // session ends (done, or a dropped link the sender will retry), waits again.
 // Runs until stop(), which the caller does when the receiver engine exits.
-function startReceiverBridge({ getTicket, enginePort, log = () => {} }) {
+// onPaired, if given, is called each time a sender arrives through the
+// relay (so the app can tell the transfer didn't go direct).
+function startReceiverBridge({ getTicket, enginePort, log = () => {}, onPaired = () => {} }) {
   let stopped = false;
   let current = null;
 
@@ -176,6 +185,7 @@ function startReceiverBridge({ getTicket, enginePort, log = () => {} }) {
             return;
 
           ws.off("message", onFirst);
+          onPaired();
           // Hold the sender's bytes until the local engine connection is up.
           ws.pause();
 

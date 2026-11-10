@@ -55,6 +55,7 @@ using platform_socklen_t = int;
 #include <netdb.h>
 #include <sys/select.h>
 #include <sys/time.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <cerrno>
 #include <string>
@@ -91,10 +92,11 @@ using platform_socklen_t = socklen_t;
 
 // On POSIX, writing to a connection the peer has already closed raises
 // SIGPIPE, whose default action kills the whole process — no
-// transfer_failed event and no meaningful exit code, so the apps can't tell
-// what happened and don't retry. Ignoring it turns that into an ordinary
-// EPIPE error that's reported and retried like any dropped link.
-// Idempotent; no-op on Windows (which has no SIGPIPE).
+// transfer_failed event, no exit code worth reading, and in library use
+// (Android) the host app dies with it. Ignoring it turns that into an
+// ordinary EPIPE error that's reported and retried like any dropped link.
+// Process-wide, as networking code generally requires; Android's runtime
+// already ignores SIGPIPE in app processes. Idempotent; no-op on Windows.
 #ifndef _WIN32
 #include <csignal>
 #include <mutex>

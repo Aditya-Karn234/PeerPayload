@@ -1,0 +1,15 @@
+{
+  "name": "peerpayload-connect-mailbox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Untrusted store-and-forward mailbox for PeerPayload Connect: holds end-to-end encrypted, device-signed envelopes for devices until they collect them. Can't read or forge anything.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "peerpayload-protocol": "file:../../protocol",
+    "ws": "^8.18.0"
+  }
+}

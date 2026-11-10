@@ -43,11 +43,14 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Runs one engine process to completion. Resolves with its final event
 // (transfer_complete or transfer_failed); rejects if it exits without one,
-// which means it crashed or couldn't start at all.
-function runEngineOnce(exePath, args, onEvent) {
+// which means it crashed or couldn't start at all (or was killed).
+// onSpawn, if given, receives the process handle (for handle.kill()).
+function runEngineOnce(exePath, args, onEvent, onSpawn) {
   return new Promise((resolve, reject) => {
     const handle = spawnEngineProcess(exePath, args);
     let finalEvent = null;
+
+    onSpawn?.(handle);
 
     handle.on("event", (event) => {
       onEvent?.(event);
@@ -88,6 +91,7 @@ const SWITCH_TO_RELAY_REASONS = new Set(["connection_failed", "tls_pin_mismatch"
 //   target   { host, port } the receiver advertised at accept time
 //   baseArgs engine args without -h/-p (token, id, chunk size, pin, path)
 //   relay    { getTicket } or null when the backend has no relay configured
+//   onSpawn  (handle) => void for each engine process started (to stop it)
 async function runSender({
   exePath,
   baseArgs,
@@ -96,6 +100,7 @@ async function runSender({
   onEvent,
   onRetry,
   onPath,
+  onSpawn,
   wait = sleep,
   probe = probeTcp,
   startBridge = startSenderBridge,
@@ -142,7 +147,7 @@ async function runSender({
         }
 
         onEvent?.(event, attempts, path);
-      });
+      }, onSpawn);
 
       if (finalEvent.event === "transfer_complete")
         return { finalEvent, attempts, connected, path };

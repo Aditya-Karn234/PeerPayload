@@ -5,7 +5,7 @@ const db = require("../db");
 const presenceService = require("../services/presenceService");
 const signalBus = require("../signalBus");
 const config = require("../config");
-const { issueRelayTicket } = require("../relayTickets");
+const { issueBackendTicket: issueRelayTicket } = require("peerpayload-protocol");
 
 const router = createRouter();
 

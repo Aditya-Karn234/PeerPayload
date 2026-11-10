@@ -1,7 +1,7 @@
 const http = require("http");
 const { WebSocketServer } = require("ws");
 
-const { verifyTicket } = require("./ticket");
+const { verifyTicket } = require("peerpayload-protocol");
 
 // Blind relay for transfers whose two machines can't reach each other
 // directly (different NATs, firewalls). Each side opens a WebSocket with a
@@ -22,15 +22,22 @@ const { verifyTicket } = require("./ticket");
 const HIGH_WATER = 8 * 1024 * 1024;
 const LOW_WATER = 2 * 1024 * 1024;
 
+// secret: enables backend tickets (Enterprise). Without one, only device
+// tickets (Connect) are accepted.
+// maxSocketsPerIp: device tickets can be made by anyone with a key pair, so
+// cap how much of the relay one address can hold.
+// trustProxy: take the client address from X-Forwarded-For (only behind a
+// proxy that sets it, e.g. Render); otherwise it could be spoofed.
 function createRelay({
-  secret,
+  secret = null,
   unpairedTimeoutMs = 120_000,
   maxSockets = 200,
+  maxSocketsPerIp = 20,
+  trustProxy = false,
   pingIntervalMs = 30_000,
   log = console,
 } = {}) {
-  if (!secret)
-    throw new Error("relay secret is required");
+  const socketsPerIp = new Map();
 
   // transferId -> { sender, receiver, paired }
   const slots = new Map();
@@ -69,10 +76,30 @@ function createRelay({
     if (wss.clients.size >= maxSockets)
       return reject(503, "Service Unavailable");
 
-    wss.handleUpgrade(req, socket, head, (ws) => attach(ws, identity));
+    const forwarded = trustProxy ? String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() : "";
+    const ip = forwarded || req.socket.remoteAddress || "unknown";
+
+    if ((socketsPerIp.get(ip) || 0) >= maxSocketsPerIp)
+      return reject(429, "Too Many Requests");
+
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      socketsPerIp.set(ip, (socketsPerIp.get(ip) || 0) + 1);
+      ws.on("close", () => {
+        const left = (socketsPerIp.get(ip) || 1) - 1;
+
+        if (left > 0)
+          socketsPerIp.set(ip, left);
+        else
+          socketsPerIp.delete(ip);
+      });
+
+      attach(ws, identity);
+    });
   });
 
-  function attach(ws, { transferId, role }) {
+  function attach(ws, identity) {
+    const { transferId, role } = identity;
+
     const otherRole = role === "sender" ? "receiver" : "sender";
     let slot = slots.get(transferId);
 
@@ -100,6 +127,7 @@ function createRelay({
     }
 
     slot[role] = ws;
+    ws.identity = identity;
     ws.isAlive = true;
     ws.on("pong", () => (ws.isAlive = true));
 
@@ -135,6 +163,20 @@ function createRelay({
     });
 
     ws.on("error", (err) => log.warn?.(`relay socket error (${transferId}/${role}): ${err.message}`));
+
+    // Device tickets: the two sides must each name the other. (The slot key
+    // already contains both IDs; this also rules out one device holding
+    // both roles under its own ID.)
+    if (slot.sender && slot.receiver && identity.kind === "device") {
+      const s = slot.sender.identity;
+      const r = slot.receiver.identity;
+
+      if (s.kind !== "device" || r.kind !== "device" || s.from !== r.to || s.to !== r.from) {
+        slot[role] = null;
+        ws.close(4003, "peer mismatch");
+        return;
+      }
+    }
 
     if (slot.sender && slot.receiver && !slot.paired) {
       clearTimeout(slot.sender.unpairedTimer);
@@ -203,14 +245,23 @@ function createRelay({
 module.exports = { createRelay };
 
 if (require.main === module) {
-  const secret = process.env.RELAY_SECRET;
+  // Optional: only needed for Enterprise (backend-signed tickets). Connect
+  // devices sign their own tickets.
+  const secret = process.env.RELAY_SECRET || null;
 
-  if (!secret || secret.length < 32) {
-    console.error("RELAY_SECRET must be set (at least 32 characters, same value as the backend's).");
+  if (secret && secret.length < 32) {
+    console.error("RELAY_SECRET must be at least 32 characters (and match the backend's).");
     process.exit(1);
   }
 
-  const relay = createRelay({ secret });
+  if (!secret)
+    console.warn("RELAY_SECRET not set: only device-signed (Connect) tickets will be accepted.");
+
+  const relay = createRelay({
+    secret,
+    trustProxy: process.env.TRUST_PROXY === "1",
+    maxSocketsPerIp: Number(process.env.MAX_SOCKETS_PER_IP) || 20,
+  });
   const port = Number(process.env.PORT) || 4200;
 
   relay.listen(port).then((p) => console.log(`Relay listening on port ${p}`));

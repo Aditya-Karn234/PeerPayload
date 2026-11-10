@@ -1,0 +1,51 @@
+# Render Blueprint for PeerPayload Connect's two services. Separate from
+# the root render.yaml (PeerPayload Enterprise), so creating these never
+# touches Enterprise's backend, database or relay. In Render: New ->
+# Blueprint -> this repo, branch connect-foundation, Blueprint path
+# connect/render.yaml.
+#
+# Both build from the repo root (no rootDir): the mailbox depends on the
+# shared protocol/ package via a file: path outside its own folder.
+#
+# Free plan limits: a service sleeps after 15 minutes without traffic and
+# takes about a minute to wake, and the mailbox keeps undelivered messages
+# in memory, so a sleep or restart drops any not yet collected.
+services:
+  # Store-and-forward for Connect's small encrypted messages (pairing,
+  # transfer offers). Can't read or forge them (connect/mailbox).
+  - type: web
+    name: peerpayload-connect-mailbox
+    runtime: node
+    plan: free
+    branch: connect-foundation
+    buildCommand: cd connect/mailbox && npm ci
+    startCommand: node connect/mailbox/src/server.js
+    healthCheckPath: /health
+    buildFilter:
+      paths:
+        - connect/mailbox/**
+        - protocol/**
+    envVars:
+      # Render's proxy sets X-Forwarded-For; the per-IP limits need the
+      # real client address.
+      - key: TRUST_PROXY
+        value: "1"
+
+  # Relay for Connect transfers between devices that can't reach each
+  # other directly. No RELAY_SECRET: it accepts only device-signed
+  # (Connect) tickets. It only ever carries encrypted bytes.
+  - type: web
+    name: peerpayload-connect-relay
+    runtime: node
+    plan: free
+    branch: connect-foundation
+    buildCommand: cd relay && npm ci
+    startCommand: node relay/src/server.js
+    healthCheckPath: /health
+    buildFilter:
+      paths:
+        - relay/**
+        - protocol/**
+    envVars:
+      - key: TRUST_PROXY
+        value: "1"

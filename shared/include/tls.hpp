@@ -42,7 +42,51 @@ inline std::string tlsErrorText()
     return std::string(buf);
 }
 
-inline SSL_CTX *createClientTlsContext(std::string &error)
+// Loads a device identity (PEM certificate + PEM private key, e.g. from
+// ppkeygen) into a context, replacing the throwaway per-run certificate.
+// With a lasting identity the certificate's fingerprint is a stable device
+// ID that peers can pin and allow-list.
+inline bool loadIdentity(SSL_CTX *ctx, const std::string &certPath, const std::string &keyPath, std::string &error)
+{
+    if (SSL_CTX_use_certificate_file(ctx, certPath.c_str(), SSL_FILETYPE_PEM) != 1)
+    {
+        error = "cannot load certificate " + certPath + ": " + tlsErrorText();
+        return false;
+    }
+
+    if (SSL_CTX_use_PrivateKey_file(ctx, keyPath.c_str(), SSL_FILETYPE_PEM) != 1)
+    {
+        error = "cannot load private key " + keyPath + ": " + tlsErrorText();
+        return false;
+    }
+
+    if (SSL_CTX_check_private_key(ctx) != 1)
+    {
+        error = "private key does not match certificate";
+        return false;
+    }
+
+    return true;
+}
+
+// Mutual TLS: the peer must present a certificate. These are self-signed
+// device certificates with no CA to chain to, so OpenSSL is told to accept
+// any certificate during the handshake; the caller then checks the
+// presented certificate's fingerprint against its allow-list, which is the
+// actual authentication.
+inline int acceptAnyPeerCertificate(int, X509_STORE_CTX *)
+{
+    return 1;
+}
+
+inline void requirePeerCertificate(SSL_CTX *ctx)
+{
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, acceptAnyPeerCertificate);
+}
+
+// certPath/keyPath empty: no client certificate (the default, as before).
+// Given: presented when the receiver asks for one (receiver --peer-sha256).
+inline SSL_CTX *createClientTlsContext(std::string &error, const std::string &certPath = "", const std::string &keyPath = "")
 {
     SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
 
@@ -54,9 +98,16 @@ inline SSL_CTX *createClientTlsContext(std::string &error)
 
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
 
-    // No trust anchor to check the receiver's ephemeral self-signed
-    // certificate against — see the file-level comment.
+    // The receiver's certificate is self-signed, so there's no trust anchor
+    // to verify it against here; --pin-sha256 checks it after the
+    // handshake instead. See the file-level comment.
     SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);
+
+    if (!certPath.empty() && !loadIdentity(ctx, certPath, keyPath, error))
+    {
+        SSL_CTX_free(ctx);
+        return nullptr;
+    }
 
     return ctx;
 }
@@ -117,7 +168,10 @@ inline bool generateEphemeralCertificate(X509 **outCert, EVP_PKEY **outKey, std:
     return true;
 }
 
-inline SSL_CTX *createServerTlsContext(std::string &error)
+// certPath/keyPath empty: a throwaway certificate for this run (as before).
+// Given: the device's lasting identity, so its fingerprint stays the same
+// across runs.
+inline SSL_CTX *createServerTlsContext(std::string &error, const std::string &certPath = "", const std::string &keyPath = "")
 {
     SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
 
@@ -128,6 +182,17 @@ inline SSL_CTX *createServerTlsContext(std::string &error)
     }
 
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+
+    if (!certPath.empty())
+    {
+        if (!loadIdentity(ctx, certPath, keyPath, error))
+        {
+            SSL_CTX_free(ctx);
+            return nullptr;
+        }
+
+        return ctx;
+    }
 
     X509 *cert = nullptr;
     EVP_PKEY *pkey = nullptr;

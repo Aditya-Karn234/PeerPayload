@@ -2,9 +2,11 @@ add_executable(receiver
     src/main.cpp
 )
 
+# All the logic is in the engine library (engine/); src/main.cpp is just
+# main() calling it, so the program and the library can't drift apart.
 target_link_libraries(receiver
     PRIVATE
-    shared
+    ppengine
     Threads::Threads
 )
 

@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+/* Tailwind only generates classes it finds in scanned files; the shared
+   components live outside this app's folder. */
+@source "../../../../../packages/ui/src";
+
+@import "../../../../../packages/ui/src/theme.css";

@@ -1,0 +1,53 @@
+# Own appId and product name, so Connect installs and keeps its data
+# separately from PeerPayload Enterprise on the same machine.
+appId: com.peerpayload.connect
+productName: PeerPayload Connect
+directories:
+  output: dist
+  # icon.png here becomes the installer/exe icon (not build/: that's
+  # git-ignored repo-wide).
+  buildResources: resources
+
+files:
+  - out/**/*
+  - resources/*.png
+  - package.json
+
+# The engine: sender/receiver move the bytes, ppkeygen creates the device
+# identity on first run. Read from resources/engine/ (src/main/config.js).
+extraResources:
+  - from: ../../build/sender/sender.exe
+    to: engine/sender.exe
+  - from: ../../build/receiver/receiver.exe
+    to: engine/receiver.exe
+  - from: ../../build/engine/ppkeygen.exe
+    to: engine/ppkeygen.exe
+
+# peerpayload://pair#... links open the app. Windows: registered by the
+# app itself at startup (src/main/index.js); this entry declares it in the
+# Linux desktop file (and macOS, if built).
+protocols:
+  - name: PeerPayload pairing link
+    schemes: [peerpayload]
+
+win:
+  # Prebuilt multi-size .ico (16-256 px), so the build doesn't have to
+  # convert icon.png (electron-builder's converter ran out of memory).
+  icon: resources/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  # Removes the peerpayload:// link registration on uninstall.
+  include: resources/installer.nsh
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Network

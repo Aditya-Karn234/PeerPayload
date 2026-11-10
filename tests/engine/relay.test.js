@@ -7,7 +7,9 @@ const fs = require("fs");
 const path = require("path");
 const h = require("./harness");
 const { createRelay } = require("../../relay/src/server");
-const { issueTicket } = require("../../relay/src/ticket");
+const { issueBackendTicket, issueDeviceTicket } = require("../../protocol");
+
+const issueTicket = (...args) => issueBackendTicket(...args).ticket;
 const { runSender, senderReportStatus, startReceiverBridge } = require("../../client-core/transferPolicy");
 
 const SECRET = "relay-test-secret".padEnd(40, "z");
@@ -193,4 +195,49 @@ test("relay: no direct path and no working relay -> not_reachable", async (t) =>
   assert.equal(noRelay.path, "direct");
   assert.equal(noRelay.finalEvent.reason, "connection_failed");
   assert.equal(senderReportStatus(noRelay), "not_reachable");
+});
+
+test("relay: Connect-style — device identities, mutual TLS, device-signed tickets, no backend", async (t) => {
+  const { execFileSync } = require("child_process");
+  const keygen = path.join(path.dirname(path.dirname(h.senderPath)), "engine", `ppkeygen${process.platform === "win32" ? ".exe" : ""}`);
+  const { srcDir, outDir } = setup(t);
+  const idDir = h.makeTempDir("ids");
+  t.after(() => fs.rmSync(idDir, { recursive: true, force: true }));
+
+  const device = (name) => {
+    const dir = path.join(idDir, name);
+    const fp = JSON.parse(execFileSync(keygen, ["--out", dir], { encoding: "utf8" }).trim()).certSha256;
+    const cert = path.join(dir, "device.crt");
+    const key = path.join(dir, "device.key");
+    return { fp, cert, key, certPem: fs.readFileSync(cert, "utf8"), keyPem: fs.readFileSync(key, "utf8") };
+  };
+  const alice = device("alice");
+  const bob = device("bob");
+  const deviceTicket = (me, peer, role) => async () => ({
+    url: relayUrl,
+    ticket: issueDeviceTicket({ sessionId: "c1", role, peerFingerprint: peer.fp, certPem: me.certPem, keyPem: me.keyPem }),
+  });
+
+  const src = h.writeRandomFile(path.join(srcDir, "holiday.bin"), 2 * 1024 * 1024 + 1, 26);
+  const receiver = await h.startReceiver({ outDir, transferId: "c1", args: ["--cert", bob.cert, "--key", bob.key, "--peer-sha256", alice.fp, "--listen-timeout", "60"] });
+  assert.equal(receiver.ofType("listening")[0].certSha256, bob.fp);
+  const bridge = startReceiverBridge({ getTicket: deviceTicket(bob, alice, "receiver"), enginePort: receiver.port });
+  t.after(() => {
+    bridge.stop();
+    receiver.kill();
+  });
+
+  const outcome = await runSender({
+    exePath: h.senderPath,
+    baseArgs: ["--transfer-id", "c1", "--cert", alice.cert, "--key", alice.key, "--pin-sha256", bob.fp, src],
+    target: { host: "127.0.0.1", port: await h.freePort() },
+    relay: { getTicket: deviceTicket(alice, bob, "sender") },
+    wait: noWait,
+  });
+
+  assert.equal(outcome.finalEvent.event, "transfer_complete", JSON.stringify(outcome.finalEvent));
+  assert.equal(outcome.path, "relay");
+  await h.withTimeout(receiver.exited, 10000, "receiver did not finish");
+  assert.equal(receiver.ofType("session_start")[0].peerCertSha256, alice.fp, "Bob's engine knows Alice sent it");
+  assert.equal(h.sha256File(path.join(outDir, "holiday.bin")), h.sha256File(src));
 });
