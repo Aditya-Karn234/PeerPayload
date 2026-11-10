@@ -10,7 +10,7 @@ old entries stay.
 | Phase | What | Status |
 |---|---|---|
 | 0 | Decisions: repository, license, hosting, signing, builds | Done 2026-11-10 |
-| 1 | Open-source ready: license, one `main`, README and docs, security scanning and first fixes (all done); Electron upgrade, Android background work (testing); test-data cleanup, license fields (to do) | In progress |
+| 1 | Open-source ready: license, one `main`, README and docs, security scanning and fixes, Electron upgrade, Android background work (all done); test-data cleanup, license fields (to do) | In progress |
 | 2 | Three real builds (Android APK, Windows EXE, Linux AppImage) and a release workflow | Not started |
 | 3 | First public release, checksums, verification steps, download tracking, landing page | Not started |
 | 4 | Launch: demo, hosting upgrade, r/SideProject first, then wider | Not started |
@@ -229,4 +229,36 @@ service; it's declared in the manifest.
 Found on the way: on Android 12+, `allowBackup="false"` no longer stops
 device-to-device transfer, which could copy the device's private keys to a
 new phone. Added `dataExtractionRules` excluding everything.
+
+### D14. Released after device testing: Connect 0.2.6 and Android 0.1.4, Enterprise 1.2.1 (2026-11-11)
+
+Tested by hand on the owner's PC and a Galaxy A14 (Android 15) before
+release:
+
+- **Android 0.1.4:** a 300 MB transfer kept going with the app in the
+  background and the screen locked; offer notifications arrived at once
+  with the app swiped away; "Stay ready to receive" came back by itself
+  after a reboot; pause and resume in both directions.
+- **Connect desktop 0.2.6 (Electron 45):** transfers both ways with the
+  phone, pause and resume from either side.
+- **Enterprise 1.2.1 (Electron 45):** sign-in, a transfer between two
+  accounts (desktop and CLI), one running copy only, changing a password.
+
+Bugs the testing found, all fixed before release, each with a test where
+one could be automated:
+
+- A pause that reached the other side after its retries had given up
+  left that side "failed"; it now becomes "paused".
+- A sender answered a resume request with "removed" while it was
+  resuming itself or still retrying, which ended the receiver's copy.
+  Pressing Resume on both sides at once could end a transfer this way.
+- Pausing between retry attempts didn't stop the retries.
+- Enterprise allowed two running copies, which shared one sign-in and
+  silently acted as each other's account.
+- The Electron 45 build config built only the UI, so installers carried
+  stale main-process code. Caught before release; installers are now
+  checked inside after building.
+- Enterprise had no way to change a password. Added: in Settings, with
+  `peerpayload passwd`, and through the API; it signs out the account's
+  other devices.
 

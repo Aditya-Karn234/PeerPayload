@@ -12,7 +12,7 @@ TLS with those keys, directly or through the relay.
   (pairing, transfer offers) between devices that aren't both online. It
   can't read them or forge them. Messages are kept in memory, or in SQLite
   with `MAILBOX_DB=<file>` so they survive a restart.
-- `connect/desktop/`: the Electron app (0.2.5).
+- `connect/desktop/`: the Electron app (0.2.6).
 - `connect/android/`: the Android app (0.1.4, Android 8+), described
   [below](#android).
 
