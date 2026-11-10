@@ -103,6 +103,8 @@ Kotlin ports of the JavaScript ones.
   with a progress notification (and a Pause button) runs while one does,
   and holds the CPU awake only while bytes are moving. Android 15 allows
   this 6 hours a day.
+- Device › Open-source licences shows the app's licence and those of
+  everything it includes (`legal/THIRD_PARTY_NOTICES.md`).
 - **Stay ready to receive** (Device tab, off by default): keeps the mailbox
   connection in the background, so an offer arrives as a notification with
   Accept and Decline even when the app is closed, and comes back after a
@@ -124,8 +126,9 @@ gradle :app:assembleDebug        # or :app:assembleRelease
 gradle :app:testDebugUnitTest    # then: node tools/check-kotlin.js
 ```
 
-Release builds are signed only when `signing/keystore.properties` is
-present. That folder is git-ignored. Keep a backup of it somewhere else:
+The build copies `LICENSE`, `NOTICE` and `legal/THIRD_PARTY_NOTICES.md`
+into the APK by itself. Release builds are signed only when
+`signing/keystore.properties` is present. That folder is git-ignored. Keep a backup of it somewhere else:
 without the key, no update can be installed over an APK that's already
 been shared. R8 shrinking keeps the APK at about 19 MB.
 

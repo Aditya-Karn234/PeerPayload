@@ -73,8 +73,8 @@ This is a **control plane / data plane split**:
 | `sender/`, `receiver/`, `shared/` | The C++ engine — TLS, resumable, pipelined chunk transfer. No knowledge of accounts, backend, or either client. |
 | `backend/` | Express + Prisma/Postgres + socket.io. Auth (bearer tokens, DB-backed sessions so admin revocation is immediate), presence (heartbeat + TTL), directory lookup, and transfer audit records. Deployed on Render. |
 | `client-core/` | The one client-side implementation of "talk to the backend" and "spawn the engine and read its JSON event stream" — shared by both `desktop/` and `cli/` so there's exactly one copy of that logic. |
-| `desktop/` | Electron + React. `electron-builder` produces a Windows installer (NSIS) and a Linux AppImage. |
-| `cli/` | `peerpayload` — commander-based, `login`/`send`/`status`/`history`. |
+| `desktop/` | Electron + React. `electron-builder` produces a Windows installer (NSIS); a Linux AppImage target is configured but hasn't been built or tested. |
+| `cli/` | `peerpayload` — commander-based, `login`/`send`/`status`/`history`/`passwd`. |
 | `packages/ui/` | Presentational React components (`Meter`, `StatTile`, `StatusBadge`, `ThemeToggle`) shared by the desktop apps. |
 | `relay/` | Stateless WebSocket relay for transfers that can't connect directly. Pairs the two sides of a transfer by backend-signed ticket and forwards their bytes with flow control. Its own service, so relayed traffic never competes with the API. |
 | `render.yaml` | Render Blueprint — deploys `backend/` with its Postgres, and the relay as a separate service sharing a generated `RELAY_SECRET`. |
@@ -159,9 +159,10 @@ config bakes in the production URL for a packaged install instead).
   pins to comes from the backend over HTTPS, so a compromised backend
   could substitute its own. Standalone runs without `--pin-sha256` have no
   receiver authentication at all.
-- **Login rate limiting is per process.** Failed logins are capped per
-  IP+username and per IP in memory; running several backend instances
-  would need a shared store.
+- **Rate limiting is per process.** Failed logins (and wrong current
+  passwords when changing one) are capped per IP+username and per IP, and
+  all API requests per IP (600 a minute by default), in memory; running
+  several backend instances would need a shared store.
 - **Render's free tier cold-starts** after ~15 minutes idle, adding
   30–50s of latency to the first request after a quiet period. A
   heartbeat can report "online" before the signaling socket that actually

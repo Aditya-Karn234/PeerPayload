@@ -158,7 +158,8 @@ node --test "tests/engine/*.test.js"
 ```
 
 To build the engine and run every suite in the repo (engine library,
-engine, relay, Connect mailbox, Connect core) in one go, as CI does:
+engine, protocol, relay, Connect mailbox, Connect core) in one go, as CI
+does:
 
 ```sh
 npm test               # builds first; on Windows MinGW64 must be at C:\msys64 (or set MINGW_BIN)
@@ -172,7 +173,7 @@ node tools/test-all.js --only relay,connect-core
 | `resume.test.js` | Link dropped mid-transfer (TLS and plaintext), receiver or sender process killed, repeated interruptions, partially finished directories, plus the cases that must restart from chunk 0 instead of resuming: changed file size, changed `--chunk-size`, deleted partial file, garbage or out-of-range `transfer.state`. |
 | `ipv6.test.js` | Dual-stack receiver: transfers to `::1` and `[::1]`, IPv4 senders shown as plain IPv4, hostnames resolving to both families, pinning over IPv6. Skipped on machines without IPv6 loopback. |
 | `identity.test.js` | `ppkeygen` (create, show, refuse to overwrite), stable receiver fingerprints with an identity, mutual TLS between paired devices (receiver learns the sender's ID), refusing senders with no certificate or an unknown one while staying up, several allowed devices, invalid flag combinations, and senders with an identity working against an Enterprise-style receiver. |
-| `relay.test.js` | Engines through the real relay and client bridges, including a Connect-style transfer (device identities, mutual TLS, device-signed tickets, no backend): an unreachable address goes via the relay (pinned, byte-identical), a reachable one never touches it, a wrong machine at the advertised address switches to the relay, a relay link dropped mid-transfer resumes, and no path at all reports `not_reachable`. The relay's own tests (`relay/test/`) cover tickets, pairing, reconnects and flow control. |
+| `relay.test.js` | Engines through the real relay and client bridges, including a Connect-style transfer (device identities, mutual TLS, device-signed tickets, no backend): an unreachable address goes via the relay (pinned, byte-identical), a reachable one never touches it, a wrong machine at the advertised address switches to the relay, a relay link dropped mid-transfer resumes, and no path at all reports `not_reachable`. A direct transfer whose link dies mid-way continues through the relay from where it stopped, and pausing a sender while it waits between retry attempts stops it with no further attempt. The relay's own tests (`relay/test/`) cover tickets, pairing, reconnects and flow control. |
 | `robustness.test.js` | Idle timeouts (a frozen link fails both sides with `peer_timeout`; a silent connection is dropped while the receiver keeps listening), the listen deadline, the receiver retry window (survives a dropped link or a corrupted chunk and the re-run resumes; retry budget runs out), and certificate pinning (stable fingerprint, wrong pin refused, invalid pins rejected). |
 | `failure-injection.test.js` | No receiver, wrong or missing token, TLS/plaintext mismatch, port scans and garbage bytes (receiver must keep listening), invalid input, injected chunk corruption (`DTS_CORRUPT_CHUNK`), bit flips on the wire via a fault proxy, and a hostile raw-protocol sender: bad handshake fields, path traversal, out-of-order/oversized/missing chunks, wrong hashes. |
 
