@@ -25,6 +25,13 @@ extraResources:
     to: engine/sender.exe
   - from: ../build/receiver/receiver.exe
     to: engine/receiver.exe
+  # Licences: ours, and those of everything the app includes.
+  - from: ../LICENSE
+    to: legal/LICENSE
+  - from: ../NOTICE
+    to: legal/NOTICE
+  - from: ../legal/THIRD_PARTY_NOTICES.md
+    to: legal/THIRD_PARTY_NOTICES.md
 
 # electron-builder's auto-update only works with NSIS (.exe) on Windows and
 # AppImage on Linux — .msi (WiX) and .deb don't support electron-updater at

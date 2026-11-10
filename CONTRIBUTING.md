@@ -40,7 +40,11 @@ network on a desktop machine (it never prints the stored login token).
 4. If you change a wire format in `protocol/`, the Android app's Kotlin
    port must change with it, and the vectors must be regenerated with
    `tools/make-vectors.js`.
-5. Open a pull request saying what changed and why. CI runs every test
+5. If you add, remove or update a dependency that ships in an app,
+   regenerate `legal/THIRD_PARTY_NOTICES.md` with
+   `node tools/third-party-notices.js` (see its header for the Android
+   part).
+6. Open a pull request saying what changed and why. CI runs every test
    suite on Windows and Linux; it has to pass.
 
 ## Style

@@ -1,6 +1,7 @@
 {
   "name": "data-transfer-backend",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "type": "commonjs",
   "scripts": {

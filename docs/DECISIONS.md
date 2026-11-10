@@ -10,7 +10,7 @@ old entries stay.
 | Phase | What | Status |
 |---|---|---|
 | 0 | Decisions: repository, license, hosting, signing, builds | Done 2026-11-10 |
-| 1 | Open-source ready: license, one `main`, README and docs, security scanning and fixes, Electron upgrade, Android background work (all done); test-data cleanup, license fields (to do) | In progress |
+| 1 | Open-source ready: license and notices, one `main`, README and docs, security scanning and fixes, Electron upgrade, Android background work | Done 2026-11-11 |
 | 2 | Three real builds (Android APK, Windows EXE, Linux AppImage) and a release workflow | Not started |
 | 3 | First public release, checksums, verification steps, download tracking, landing page | Not started |
 | 4 | Launch: demo, hosting upgrade, r/SideProject first, then wider | Not started |
@@ -284,4 +284,22 @@ Confirms D5 now that the release workflow is next: the keystore and its
 passwords become encrypted repository secrets, added by the owner (they
 never pass through anyone else). The encrypted offline backup remains the
 master copy.
+
+### D18. Licence notices ship inside every app (2026-11-11)
+
+Apache-2.0, MIT and the other licences of what the apps include require
+their notices to travel with them. `tools/third-party-notices.js` builds
+`legal/THIRD_PARTY_NOTICES.md` from what actually ships: the npm packages
+installed for each desktop app (not the lockfile's builds for other
+systems), the Android release's resolved libraries with licences from their
+own POM files, OpenSSL in the engine, and Electron and Chromium (which ship
+their own licence files). MIT packages without a licence file get the MIT
+text with their author's copyright line. LICENSE, NOTICE and the notices
+file go into both desktop installers (`resources/legal`) and the APK's
+assets, where Device › Open-source licences shows them.
+
+Found on the way, both fixed in Android 0.1.5: BouncyCastle 1.80 had three
+advisories (Dependabot can't see Gradle dependencies, so the APK's 117
+libraries were checked against OSV directly); BouncyCastle 1.86's jars each
+carry the same licence file, kept once.
 

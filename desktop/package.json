@@ -1,6 +1,7 @@
 {
   "name": "peerpayload-desktop",
   "version": "1.2.1",
+  "license": "Apache-2.0",
   "private": true,
   "description": "PeerPayload Enterprise desktop app: login, presence, recipient picker, and a background receive listener around the same engine/backend the CLI uses.",
   "main": "out/main/index.js",

@@ -1,6 +1,7 @@
 {
   "name": "peerpayload-relay",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "description": "Blind WebSocket relay for PeerPayload transfers that can't connect directly. Pairs a sender and a receiver by transfer and forwards their (TLS-encrypted) bytes; never sees file contents.",
   "main": "src/server.js",

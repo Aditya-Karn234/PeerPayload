@@ -1,6 +1,7 @@
 {
   "name": "connect-core",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "description": "PeerPayload Connect client logic: device identity, contact cards, pairing links, end-to-end encrypted envelopes. No accounts, no server trust.",
   "main": "index.js",

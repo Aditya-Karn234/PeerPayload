@@ -22,6 +22,13 @@ extraResources:
     to: engine/receiver.exe
   - from: ../../build/engine/ppkeygen.exe
     to: engine/ppkeygen.exe
+  # Licences: ours, and those of everything the app includes.
+  - from: ../../LICENSE
+    to: legal/LICENSE
+  - from: ../../NOTICE
+    to: legal/NOTICE
+  - from: ../../legal/THIRD_PARTY_NOTICES.md
+    to: legal/THIRD_PARTY_NOTICES.md
 
 # peerpayload://pair#... links open the app. Windows: registered by the
 # app itself at startup (src/main/index.js); this entry declares it in the

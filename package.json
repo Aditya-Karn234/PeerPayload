@@ -1,5 +1,6 @@
 {
   "name": "peerpayload",
+  "license": "Apache-2.0",
   "private": true,
   "description": "Repo root: no code or dependencies here. Each package (backend, desktop, cli, client-core, relay, connect/*) installs on its own.",
   "scripts": {

@@ -163,6 +163,30 @@ private fun ReadyToReceivePanel(vm: ConnectViewModel) {
     }
 }
 
+// This app's licence and those of everything it includes, packaged into the
+// APK's assets from the repository (build.gradle.kts copyLegal).
+@Composable
+private fun LicencesDialog(onClose: () -> Unit) {
+    val context = LocalContext.current
+    val t = LocalTokens.current
+    val lines = remember {
+        listOf("legal/THIRD_PARTY_NOTICES.md", "legal/NOTICE", "legal/LICENSE").flatMap { name ->
+            runCatching { context.assets.open(name).bufferedReader().readLines() }.getOrDefault(emptyList()) + "" + "────────" + ""
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onClose,
+        confirmButton = { TextButton(onClose) { Text("Close") } },
+        title = { Text("Open-source licences") },
+        text = {
+            LazyColumn {
+                items(lines) { line -> Text(line, fontFamily = Mono, fontSize = 11.sp, color = t.inkSecondary) }
+            }
+        },
+    )
+}
+
 // ---- building blocks ----
 
 @Composable
@@ -656,6 +680,11 @@ private fun AddContactDialog(vm: ConnectViewModel, onClose: () -> Unit) {
 
 @Composable
 private fun DeviceScreen(vm: ConnectViewModel) {
+    var showLicences by remember { mutableStateOf(false) }
+
+    if (showLicences)
+        LicencesDialog { showLicences = false }
+
     val status by vm.status.collectAsState()
     val context = LocalContext.current
     val t = LocalTokens.current
@@ -682,6 +711,11 @@ private fun DeviceScreen(vm: ConnectViewModel) {
         Panel {
             Label("Engine")
             Text("Wire protocol ${NativeEngine.protocolVersion()}", fontFamily = Mono, fontSize = 13.sp, color = t.inkSecondary)
+        }
+        Panel {
+            Label("About")
+            Text("PeerPayload Connect is open source, under the Apache License 2.0.", fontSize = 13.sp, color = t.inkSecondary)
+            TextButton({ showLicences = true }) { Text("Open-source licences") }
         }
     }
 }

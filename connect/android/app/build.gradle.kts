@@ -64,6 +64,10 @@ android {
         compose = true
     }
 
+    // Licences (LICENSE, NOTICE, legal/THIRD_PARTY_NOTICES.md from the repo
+    // root) go into the APK's assets: Device › Open-source licences.
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/legalAssets"))
+
     packaging {
         // BouncyCastle's jars each carry the same JPMS/OSGi metadata.
         resources.excludes += listOf("META-INF/versions/9/OSGI-INF/MANIFEST.MF", "META-INF/versions/*/module-info.class")
@@ -104,3 +108,11 @@ dependencies {
     // A stand-in relay for the bridge tests.
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
+
+val copyLegal = tasks.register<Copy>("copyLegal") {
+    val root = rootProject.projectDir.resolve("../..")
+    from(root.resolve("LICENSE"), root.resolve("NOTICE"), root.resolve("legal/THIRD_PARTY_NOTICES.md"))
+    into(layout.buildDirectory.dir("generated/legalAssets/legal"))
+}
+
+tasks.named("preBuild") { dependsOn(copyLegal) }
