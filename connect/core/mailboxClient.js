@@ -16,10 +16,22 @@ const { open } = require("./envelope");
 
 const HEARTBEAT_MS = 25_000;
 
+// A mailbox URL without trailing slashes. Not url.replace(/\/+$/, ""):
+// that regex takes quadratic time on a long run of slashes, and mailbox
+// URLs arrive in other people's pairing links.
+function trimSlashes(url) {
+  let end = url.length;
+
+  while (end > 0 && url[end - 1] === "/")
+    end--;
+
+  return url.slice(0, end);
+}
+
 // Posts one envelope to a mailbox (any mailbox: contacts may use different
 // ones). Resolves with the mailbox's answer; throws with .status if refused.
 async function postEnvelope(url, envelope) {
-  const res = await fetch(`${url.replace(/\/+$/, "")}/v1/messages`, {
+  const res = await fetch(`${trimSlashes(url)}/v1/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(envelope),
@@ -39,7 +51,7 @@ async function postEnvelope(url, envelope) {
 // Envelopes that fail verification are acknowledged and dropped.
 // onStatus("connected" | "disconnected" | "error", detail) is optional.
 function createMailboxClient({ url, identity, onEnvelope, onStatus = () => {}, log = () => {}, heartbeatMs = HEARTBEAT_MS }) {
-  const base = url.replace(/\/+$/, "");
+  const base = trimSlashes(url);
   const wsBase = base.replace(/^http/, "ws");
   const seen = new Set(); // ids already handled this session (redelivery is idempotent)
 
