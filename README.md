@@ -185,9 +185,8 @@ The engines' pinned mutual TLS runs end to end on all three paths: the
 reversed and relay paths go through local bridges, so the engines never
 see the difference.
 
-Hosted services (Render free plan, `connect/render.yaml`, from the
-`connect-foundation` branch) are the app's defaults; either can be
-changed in Settings:
+Hosted services (Render free plan, `connect/render.yaml`, from `main`)
+are the app's defaults; either can be changed in Settings:
 
 - mailbox: `https://peerpayload-connect-mailbox.onrender.com`
 - relay: `wss://peerpayload-connect-relay.onrender.com/v1/connect`

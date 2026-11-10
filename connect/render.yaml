@@ -1,7 +1,7 @@
 # Render Blueprint for PeerPayload Connect's two services. Separate from
 # the root render.yaml (PeerPayload Enterprise), so creating these never
 # touches Enterprise's backend, database or relay. In Render: New ->
-# Blueprint -> this repo, branch connect-foundation, Blueprint path
+# Blueprint -> this repo, branch main, Blueprint path
 # connect/render.yaml.
 #
 # Both build from the repo root (no rootDir): the mailbox depends on the
@@ -17,7 +17,7 @@ services:
     name: peerpayload-connect-mailbox
     runtime: node
     plan: free
-    branch: connect-foundation
+    branch: main
     buildCommand: cd connect/mailbox && npm ci
     startCommand: node connect/mailbox/src/server.js
     healthCheckPath: /health
@@ -38,7 +38,7 @@ services:
     name: peerpayload-connect-relay
     runtime: node
     plan: free
-    branch: connect-foundation
+    branch: main
     buildCommand: cd relay && npm ci
     startCommand: node relay/src/server.js
     healthCheckPath: /health
