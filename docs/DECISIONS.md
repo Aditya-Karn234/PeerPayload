@@ -179,7 +179,11 @@ order of risk:
    (vite, electron-builder), then release Connect desktop 0.2.6 and
    Enterprise 1.2.1. Dependabot's grouped pull request jumps straight to
    Electron 42 and vite 8 untested, so it is replaced by this work rather
-   than merged. Next.
+   than merged. Upgraded to Electron 45.2.3 (the newest supported major),
+   electron-vite 6, vite 8, @vitejs/plugin-react 6, electron-builder
+   26.18; js-yaml 4.3.2 in electron-updater, which ships in Enterprise.
+   Connect's two-window UI test passes on it. Released only after a manual
+   check of both installers.
 
 Accepted, not fixed: **deepmerge-ts** (stack exhaustion on recursive
 objects) inside Prisma's command-line tool. The fix exists only in Prisma
@@ -187,6 +191,11 @@ objects) inside Prisma's command-line tool. The fix exists only in Prisma
 configuration while running database migrations at deploy, so no outside
 input reaches it. Dismissed on GitHub as "vulnerable code not used";
 revisit with the next Prisma major upgrade.
+
+Also accepted: **minimatch** inside electron-builder's dependencies
+(moderate, glob-pattern denial of service). Only fixable by moving
+electron-builder to another major version, and it only reads the glob
+patterns in our own build configuration, at build time.
 
 ### D12. Android transfers keep running in the background (2026-11-10)
 

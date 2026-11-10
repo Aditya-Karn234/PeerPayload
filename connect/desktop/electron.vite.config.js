@@ -1,15 +1,11 @@
 import { resolve } from "path";
-import { defineConfig, externalizeDepsPlugin } from "electron-vite";
+import { defineConfig } from "electron-vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  main: {
-    plugins: [externalizeDepsPlugin()],
-  },
-  preload: {
-    plugins: [externalizeDepsPlugin()],
-  },
+  // main and preload: electron-vite keeps dependencies out of the bundle
+  // by default (build.externalizeDeps), so they need no config.
   renderer: {
     resolve: {
       alias: {
