@@ -4,6 +4,7 @@
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
+const net = require("net");
 const path = require("path");
 const h = require("./harness");
 const { createRelay } = require("../../relay/src/server");
@@ -165,6 +166,66 @@ test("relay: the relay link drops mid-transfer -> the sender reconnects and resu
   const resumes = receiver.ofType("file_start").map((e) => Number(e.resumeChunk));
   assert.ok(resumes.length >= 2 && resumes[resumes.length - 1] > 0, `resume points ${resumes}`);
   await h.withTimeout(receiver.exited, 10000, "receiver did not finish");
+  assert.equal(h.sha256File(path.join(outDir, "big.bin")), h.sha256File(src));
+});
+
+test("relay: the direct link dies mid-transfer -> the sender switches to the relay and resumes", async (t) => {
+  const { srcDir, outDir } = setup(t);
+  const size = 4 * 1024 * 1024;
+  const src = h.writeRandomFile(path.join(srcDir, "big.bin"), size, 26);
+  const { receiver, pin } = await startReceiverSide(t, outDir, "r7");
+
+  // The "network" between the two: a pass-through to the receiver that the
+  // test can take away, the way a phone leaving Wi-Fi takes its address.
+  const links = new Set();
+  const proxy = net.createServer((client) => {
+    const upstream = net.connect(receiver.port, "127.0.0.1");
+    links.add(client).add(upstream);
+    client.pipe(upstream).pipe(client);
+    for (const s of [client, upstream])
+      s.on("error", () => {}).on("close", () => links.delete(s));
+  });
+  await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+  const proxyPort = proxy.address().port;
+  t.after(() => proxy.close());
+
+  // Once ~1 MiB has been verified, the address stops answering and the
+  // live connection dies.
+  let cut = false;
+  const watcher = setInterval(() => {
+    if (!cut && receiver.ofType("chunk_verified").length > 256) {
+      cut = true;
+      proxy.close();
+      for (const s of links) s.destroy();
+    }
+  }, 20);
+  t.after(() => clearInterval(watcher));
+
+  const relayBytesBefore = relay.stats.bytes;
+  const paths = [];
+  const retries = [];
+  const outcome = await runSender({
+    exePath: h.senderPath,
+    baseArgs: baseArgs("r7", pin, src),
+    target: { host: "127.0.0.1", port: proxyPort },
+    relay: { getTicket: ticketsFor("r7", "sender") },
+    onPath: (p) => paths.push(p),
+    onRetry: (r) => retries.push(r),
+    wait: noWait,
+  });
+
+  assert.ok(cut, "the direct link was never cut");
+  assert.equal(outcome.finalEvent.event, "transfer_complete", JSON.stringify(outcome.finalEvent));
+  assert.deepEqual(paths, ["direct", "relay"]);
+  assert.equal(retries[0].path, "direct", "the failure that caused the switch happened on the direct path");
+  await h.withTimeout(receiver.exited, 10000, "receiver did not finish");
+
+  // Resumed, not restarted: the relay session started past chunk 0 and
+  // carried less than the whole file.
+  const resumes = receiver.ofType("file_start").map((e) => Number(e.resumeChunk));
+  assert.ok(resumes.length >= 2 && resumes[resumes.length - 1] > 0, `resume points ${resumes}`);
+  const viaRelay = relay.stats.bytes - relayBytesBefore;
+  assert.ok(viaRelay > 0 && viaRelay < size, `bytes through the relay: ${viaRelay} of ${size}`);
   assert.equal(h.sha256File(path.join(outDir, "big.bin")), h.sha256File(src));
 });
 
