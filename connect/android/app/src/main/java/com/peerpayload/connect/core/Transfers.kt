@@ -793,6 +793,15 @@ class Transfers(
                     return true
                 }
 
+                // The pause arrived after our side already gave up: the
+                // other side stops its engine the moment it pauses, but this
+                // message goes through the mailbox, so the dropped connection
+                // can reach us first and look like a failure (transfers.js).
+                if (message.paused && t.state == "failed" && t.started && !t.ended) {
+                    update(t.transferId) { it.copy(state = "interrupted", error = "paused by ${t.peerName}") }
+                    return true
+                }
+
                 // The other side deleted it: nothing left to resume from.
                 if (message.removed) {
                     if (t.state != "complete")

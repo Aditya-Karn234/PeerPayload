@@ -160,6 +160,37 @@ test("history: transfers running when the app stopped come back as interrupted; 
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "transfers.json"), "utf8")).length, 1, "and that's what's on disk");
 });
 
+test("resume: a pause that arrives after this side already failed still counts as a pause", () => {
+  // Pausing stops that side's engine at once, but the message saying so goes
+  // through the mailbox: the dropped connection can win, our side retries,
+  // gives up and marks the transfer failed. The late pause then corrects it.
+  const dir = path.join(tmp, "late-pause");
+  fs.mkdirSync(dir, { recursive: true });
+  const peer = "e".repeat(64);
+  const base = { direction: "out", peer, peerName: "Phone", files: [], fileCount: 1, totalBytes: 10, createdAt: Date.now(), paths: [__filename] };
+  fs.writeFileSync(path.join(dir, "transfers.json"), JSON.stringify([
+    { ...base, transferId: "latepause1", state: "failed", started: true, error: "tls_handshake_failed" },
+    { ...base, transferId: "latepause2", state: "failed", started: false, error: "connection_failed" },
+  ]));
+
+  const manager = createTransferManager({
+    identity: { dir },
+    contacts: { get: (fp) => (fp === peer ? { fp, name: "Phone", status: "paired" } : null) },
+    sendEnvelope: async () => {},
+    engine,
+  });
+
+  for (const transferId of ["latepause1", "latepause2"])
+    assert.equal(manager.handleEnvelope({ from: peer, payload: { type: "cancel", transferId, paused: true } }), true);
+
+  const byId = Object.fromEntries(manager.list().map((x) => [x.transferId, x]));
+  assert.equal(byId.latepause1.state, "interrupted");
+  assert.equal(byId.latepause1.error, "paused by Phone");
+  assert.equal(byId.latepause1.resumable, true);
+  // Never got going: nothing was paused, so it stays a failure.
+  assert.equal(byId.latepause2.state, "failed");
+});
+
 test("resume: the sender removed it, so the receiver's resume ends instead of waiting forever", async (t) => {
   const { alice, bob } = await pairedDevices(t, "Erin", "Frank");
   const { id, received } = await startThenPause(alice, bob, "sender");
