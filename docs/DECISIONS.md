@@ -262,3 +262,26 @@ one could be automated:
   `peerpayload passwd`, and through the API; it signs out the account's
   other devices.
 
+### D15. GitHub releases are for Connect only (2026-11-11)
+
+The release workflow builds and publishes PeerPayload Connect: the Android
+APK, the Windows installer and the Linux AppImage. Enterprise stays
+distributed by hand to the organisation using it.
+
+Why: Connect is the public product, usable by anyone with no account.
+Enterprise installers are tied to one organisation's backend, so public
+downloads of them would only work for people with an account there.
+
+### D16. The Linux AppImage is tested on WSL (2026-11-11)
+
+The first Linux build gets tried on this Windows 11 PC through WSL, whose
+WSLg runs Linux desktop apps, including transfers to the Windows app and
+the phone. Until that passes it isn't released.
+
+### D17. The release key goes into GitHub secrets as planned (2026-11-11)
+
+Confirms D5 now that the release workflow is next: the keystore and its
+passwords become encrypted repository secrets, added by the owner (they
+never pass through anyone else). The encrypted offline backup remains the
+master copy.
+
