@@ -164,6 +164,11 @@ order of risk:
    versions: proxy-addr (critical), body-parser, engine.io, qs. Added a
    per-IP rate limit to every API route. Fixed a log call that used the
    request URL as a format string. Done.
+   CodeQL kept six "missing rate limiting" alerts on routes inside the
+   router files. Dismissed as false positives: the limiter is app-wide and
+   runs before every router, but CodeQL can't trace it through
+   `lib/router.js`'s `createRouter` wrapper. Checked on the live server: a
+   flagged route (`POST /auth/login`) answers with RateLimit headers.
 2. **Connect: quadratic-time regex** on mailbox URLs, which arrive in other
    people's pairing links (100,000 slashes froze the app for 16 s).
    Replaced with a loop. Done; it reaches users with the next desktop
