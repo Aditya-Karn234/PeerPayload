@@ -1,0 +1,73 @@
+# CodeQL security scanning for every language in the repo. Replaces
+# GitHub's default setup, whose automatic build couldn't find the Android
+# app (it lives in connect/android, not at the repo root). Each compiled
+# language is built the same way as for its tests.
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"  # weekly, for newly published queries
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: c-cpp
+            build-mode: manual
+          - language: java-kotlin
+            build-mode: manual
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      # The engine (sender, receiver, ppkeygen, the library and its tests),
+      # as tools/test-all.js builds it.
+      - if: matrix.language == 'c-cpp'
+        run: |
+          sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel "$(nproc)"
+
+      # The Android app's Kotlin. Compiling needs neither the engine's .so
+      # files nor the release signing key. The runner has the Android SDK.
+      - if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - if: matrix.language == 'java-kotlin'
+        working-directory: connect/android
+        run: ./gradlew --no-daemon :app:compileDebugKotlin :app:compileDebugUnitTestKotlin
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
