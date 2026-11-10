@@ -139,6 +139,10 @@ Enterprise trusts its backend, run by the organisation:
   `RATE_LIMIT_PER_MINUTE`); an office behind one public IP shares that.
 - **Sessions:** random tokens stored in the database, so an admin
   deactivating an account ends its sessions at once.
+- **Password changes:** users change their own, with the current password
+  (wrong attempts count against the login limit). It ends every other
+  session of that account at once, so a leaked password or a forgotten
+  signed-in computer is cut off by changing it.
 - **Transfers:** the receiver makes a throwaway certificate for each
   transfer, and its fingerprint reaches the sender through the backend.
   The sender pins it, so nobody on the network can stand in for the

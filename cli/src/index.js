@@ -6,6 +6,7 @@ const { loginCommand } = require("./commands/login");
 const { sendCommand } = require("./commands/send");
 const { statusCommand } = require("./commands/status");
 const { historyCommand } = require("./commands/history");
+const { passwdCommand } = require("./commands/passwd");
 
 const program = new Command();
 
@@ -43,5 +44,11 @@ program
   .description("show all of your transfers")
   .option("--json", "machine-readable output")
   .action(historyCommand);
+
+program
+  .command("passwd")
+  .description("change your password (signs out your other devices)")
+  .option("--json", "machine-readable output")
+  .action(passwdCommand);
 
 program.parse();

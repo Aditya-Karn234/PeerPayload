@@ -66,14 +66,16 @@ async function revokeSession(sessionId) {
 // session-revoked push lets an already-open desktop app react immediately
 // (force logout) rather than only finding out on its next API call — this
 // is the single choke point every revocation path (admin deactivate, admin
-// explicit revoke) goes through, so it only needs wiring here once.
-async function revokeAllSessionsForUser(userId) {
+// explicit revoke, password change) goes through, so it only needs wiring
+// here once. exceptSessionId keeps one session: changing your password
+// signs out your other devices, not the one you changed it on.
+async function revokeAllSessionsForUser(userId, { exceptSessionId } = {}) {
   await db.session.updateMany({
-    where: { userId, revokedAt: null },
+    where: { userId, revokedAt: null, ...(exceptSessionId && { id: { not: exceptSessionId } }) },
     data: { revokedAt: new Date() },
   });
 
-  signalBus.emit("session-revoked", userId);
+  signalBus.emit("session-revoked", userId, exceptSessionId);
 }
 
 module.exports = {

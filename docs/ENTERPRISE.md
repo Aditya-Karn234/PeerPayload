@@ -113,6 +113,11 @@ node src/scripts/createAdmin.js <username> <password>
 From there, an admin creates everyone else's accounts through the `users`
 API.
 
+Everyone changes their own password in the desktop app (Settings ›
+Account › Change password) or with `peerpayload passwd`. It needs the
+current password, and signs out the account's other devices; the one used
+stays signed in.
+
 ## Running the backend locally
 
 ```sh

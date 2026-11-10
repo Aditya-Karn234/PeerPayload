@@ -98,6 +98,7 @@ io.use(async (socket, next) => {
       return next(new Error("unauthorized"));
 
     socket.userId = result.user.id;
+    socket.sessionId = result.session.id;
     next();
   } catch (err) {
     // A database failure here must not become an unhandled rejection.
@@ -110,6 +111,9 @@ io.use(async (socket, next) => {
 
 io.on("connection", (socket) => {
   socket.join(`user:${socket.userId}`);
+  // Its own room too, so one session can be left out of a push to all of
+  // the user's sessions (session-revoked after a password change).
+  socket.join(`session:${socket.sessionId}`);
 });
 
 signalBus.on("incoming-transfer", (userId, transfer) => {
@@ -124,8 +128,10 @@ signalBus.on("transfer-rejected", (userId, transfer) => {
   io.to(`user:${userId}`).emit("transfer-rejected", transfer);
 });
 
-signalBus.on("session-revoked", (userId) => {
-  io.to(`user:${userId}`).emit("session-revoked");
+signalBus.on("session-revoked", (userId, exceptSessionId) => {
+  const room = io.to(`user:${userId}`);
+
+  (exceptSessionId ? room.except(`session:${exceptSessionId}`) : room).emit("session-revoked");
 });
 
 server.listen(config.port, () => {

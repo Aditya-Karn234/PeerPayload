@@ -54,6 +54,15 @@ function createApiClient({ baseUrl, tokenStore }) {
       return request("/auth/me");
     },
 
+    // Your own password. Your other signed-in devices are signed out; this
+    // session stays.
+    changePassword(currentPassword, newPassword) {
+      return request("/auth/password", {
+        method: "POST",
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+    },
+
     heartbeat(address, port) {
       return request("/presence/heartbeat", {
         method: "POST",
