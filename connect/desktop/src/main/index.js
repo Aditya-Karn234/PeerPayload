@@ -119,6 +119,17 @@ function startNode() {
     }
   });
   node.on("log", (message) => console.log(`[connect] ${message}`));
+
+  // Partly received files left in .incoming by transfers that are no
+  // longer in the history (cleared in older versions).
+  try {
+    const removed = node.sweepIncoming(loadSettings().downloadDir);
+
+    if (removed.length)
+      console.log(`[connect] removed ${removed.length} leftover folder(s) from .incoming`);
+  } catch (err) {
+    console.log(`[connect] couldn't tidy .incoming: ${err.message}`);
+  }
 }
 
 function createWindow({ hidden }) {

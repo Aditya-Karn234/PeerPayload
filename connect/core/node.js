@@ -281,6 +281,11 @@ function createConnectNode({ dir, keygenPath, engine, mailboxUrl = null, relayUr
       requireStarted();
       return transfers.clearFinished();
     },
+    // Deletes leftover partly received files in <downloadDir>/.incoming
+    // that belong to no transfer in the history.
+    sweepIncoming(downloadDir) {
+      return transfers ? transfers.sweepIncoming(downloadDir) : [];
+    },
     // Deletes one transfer that isn't running (and any partly received
     // files); the other device is told, so it stops waiting to resume it.
     forget(transferId) {

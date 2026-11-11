@@ -166,7 +166,20 @@ class Transfers(
             records[t.transferId] =
                 if (t.active) t.copy(state = "interrupted", error = "PeerPayload Connect was closed during the transfer") else t
 
+        sweepIncoming()
         publish()
+    }
+
+    // Removes folders in incomingRoot that no transfer in the history uses:
+    // left by transfers cleared before clearFinished deleted them, or by
+    // older versions. Only folders named like a transfer ID (transfers.js).
+    private fun sweepIncoming() {
+        val inUse = records.values.mapNotNull { it.stagingDir?.let { d -> File(d).canonicalPath } }.toSet()
+
+        incomingRoot.listFiles()?.forEach { dir ->
+            if (dir.isDirectory && dir.name.matches(Regex("^[A-Za-z0-9_-]{8,64}$")) && dir.canonicalPath !in inUse)
+                dir.deleteRecursively()
+        }
     }
 
     // ---- records ----
@@ -724,8 +737,17 @@ class Transfers(
     }
 
     /** Forgets finished transfers (not running or resumable ones). */
+    /** Forgets finished transfers, and any partly received files they left: nothing will resume them. */
     fun clearFinished() = synchronized(records) {
-        records.values.removeAll { it.state !in ACTIVE_STATES && !it.resumable }
+        val cleared = records.values.filter { it.state !in ACTIVE_STATES && !it.resumable }
+
+        for (t in cleared) {
+            if (t.direction == "in")
+                t.stagingDir?.let { File(it).deleteRecursively() }
+
+            records.remove(t.transferId)
+        }
+
         save()
         publish()
     }

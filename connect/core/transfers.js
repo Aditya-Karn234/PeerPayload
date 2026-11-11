@@ -904,13 +904,45 @@ function createTransferManager({
     return true;
   }
 
-  // Forgets finished transfers (not ones that are running or resumable).
+  // Forgets finished transfers (not ones that are running or resumable),
+  // and any partly received files they left in .incoming: nothing will
+  // resume them.
   function clearFinished() {
     for (const [id, t] of transfers)
-      if (!ACTIVE_STATES.has(t.state) && !resumable(t))
+      if (!ACTIVE_STATES.has(t.state) && !resumable(t)) {
+        if (t.direction === "in" && t.stagingDir)
+          fs.rmSync(t.stagingDir, { recursive: true, force: true });
+
         transfers.delete(id);
+      }
 
     save();
+  }
+
+  // Removes folders in <downloadDir>/.incoming that no transfer in the
+  // history uses: left by transfers cleared before clearFinished deleted
+  // them, or by older versions. Only folders named like a transfer ID.
+  // Returns the names removed.
+  function sweepIncoming(downloadDir) {
+    const root = path.join(downloadDir, ".incoming");
+
+    if (!fs.existsSync(root))
+      return [];
+
+    const inUse = new Set([...transfers.values()].filter((t) => t.stagingDir).map((t) => path.resolve(t.stagingDir)));
+    const removed = [];
+
+    for (const name of fs.readdirSync(root)) {
+      const dir = path.join(root, name);
+
+      if (!/^[A-Za-z0-9_-]{8,64}$/.test(name) || inUse.has(path.resolve(dir)) || !fs.statSync(dir).isDirectory())
+        continue;
+
+      fs.rmSync(dir, { recursive: true, force: true });
+      removed.push(name);
+    }
+
+    return removed;
   }
 
   return {
@@ -921,6 +953,7 @@ function createTransferManager({
     resume,
     cancelOffer,
     clearFinished,
+    sweepIncoming,
     forget,
     handleEnvelope,
     list: () => [...transfers.values()].sort((a, b) => b.createdAt - a.createdAt).map(snapshot),

@@ -247,6 +247,33 @@ test("resume: asking a sender that no longer has the transfer ends it on this si
   assert.equal(alice.latest.get(id).resumable, false);
 });
 
+test("history: clearing finished transfers removes their partial files; the sweep removes orphans only", () => {
+  const dir = path.join(tmp, "incoming-tidy");
+  const downloads = path.join(dir, "downloads");
+  const staging = (id) => path.join(downloads, ".incoming", id);
+  for (const id of ["endedxxxx1", "pausedxxx2", "orphanxxx3"]) {
+    fs.mkdirSync(staging(id), { recursive: true });
+    fs.writeFileSync(path.join(staging(id), "part.bin"), "x");
+  }
+  fs.mkdirSync(path.join(downloads, ".incoming", "not an id"), { recursive: true });
+  const record = (id, state, extra) => ({ transferId: id, direction: "in", peer: "f".repeat(64), peerName: "X", files: [], fileCount: 1, totalBytes: 10, createdAt: 1, started: true, stagingDir: staging(id), state, ...extra });
+  fs.writeFileSync(path.join(dir, "transfers.json"), JSON.stringify([
+    record("endedxxxx1", "cancelled", { ended: true }),
+    record("pausedxxx2", "interrupted"),
+  ]));
+
+  const manager = createTransferManager({ identity: { dir }, contacts: { get: () => null }, sendEnvelope: async () => {}, engine });
+
+  manager.clearFinished();
+  assert.equal(fs.existsSync(staging("endedxxxx1")), false, "a cleared transfer's partial files go too");
+  assert.equal(fs.existsSync(staging("pausedxxx2")), true, "a resumable one keeps them");
+
+  assert.deepEqual(manager.sweepIncoming(downloads), ["orphanxxx3"]);
+  assert.equal(fs.existsSync(staging("pausedxxx2")), true, "in use: kept");
+  assert.equal(fs.existsSync(path.join(downloads, ".incoming", "not an id")), true, "not named like a transfer: left alone");
+  assert.deepEqual(manager.sweepIncoming(path.join(dir, "nowhere")), []);
+});
+
 test("resume: a resume request nobody answers goes back to interrupted", async (t) => {
   const dir = path.join(tmp, "unanswered");
   fs.mkdirSync(dir, { recursive: true });
