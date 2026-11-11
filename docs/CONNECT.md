@@ -81,6 +81,40 @@ usually the sender's upload: a relayed test ran at 0.23-0.37 MiB/s,
 matching that test machine's own ~3 Mbit/s upload, so the relay's
 capacity wasn't what was measured.
 
+## Linux
+
+The desktop app also builds as an AppImage (x86-64), which runs without
+installing on most distributions. Build it on Linux, from the repository
+root:
+
+```sh
+engine/build-linux.sh                      # the engine, with OpenSSL built in
+(cd connect/core && npm ci)
+cd connect/desktop && npm ci && npm run build:linux
+# -> connect/desktop/dist/PeerPayload Connect-<version>.AppImage
+```
+
+`engine/build-linux.sh` builds OpenSSL from source (checksum checked, the
+same version as Android) and links it into the engine, so the engine needs
+only the system's C library. That library sets the floor: binaries built
+on a given distribution need its glibc version or newer, so release builds
+are made on an older one (Ubuntu 22.04, glibc 2.35) to run on more
+systems.
+
+To run an AppImage: `chmod +x` it, then start it. Some distributions need
+FUSE 2 for that (`libfuse2` / `libfuse2t64` on Ubuntu).
+
+Testing on Windows with WSL (WSLg), three quirks that don't happen on a
+real Linux desktop:
+
+- The window can come up maximized and not be drawn. Un-maximizing it
+  shows it.
+- Windows' display scaling isn't passed on, so everything looks small at
+  125-150%. Start it with `--force-device-scale-factor=1.5` (or 1.25).
+- Each new secure connection inside WSL can take seconds, which delays the
+  start of a transfer (the offer and its answer go through the mailbox);
+  the transfer itself runs at full speed.
+
 ## Android
 
 A native Kotlin app (Jetpack Compose, minSdk 26, targetSdk 35) that speaks

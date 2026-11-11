@@ -11,7 +11,7 @@ old entries stay.
 |---|---|---|
 | 0 | Decisions: repository, license, hosting, signing, builds | Done 2026-11-10 |
 | 1 | Open-source ready: license and notices, one `main`, README and docs, security scanning and fixes, Electron upgrade, Android background work | Done 2026-11-11 |
-| 2 | Three real builds (Android APK, Windows EXE, Linux AppImage) and a release workflow | Not started |
+| 2 | Three real builds (Android APK, Windows EXE, Linux AppImage: all working) and a release workflow (next) | In progress |
 | 3 | First public release, checksums, verification steps, download tracking, landing page | Not started |
 | 4 | Launch: demo, hosting upgrade, r/SideProject first, then wider | Not started |
 | 5 | Later: Google Play, F-Droid, Flathub, more connection options | Not started |
@@ -302,4 +302,20 @@ Found on the way, both fixed in Android 0.1.5: BouncyCastle 1.80 had three
 advisories (Dependabot can't see Gradle dependencies, so the APK's 117
 libraries were checked against OSV directly); BouncyCastle 1.86's jars each
 carry the same licence file, kept once.
+
+### D19. Linux AppImage works; releases build it on Ubuntu 22.04 (2026-11-11)
+
+Built and tested as D16 planned, on Ubuntu 26.04 in WSL: the AppImage
+(Electron 45, 155 MB) set up a device, paired, and sent and received files
+with the Android app and the Windows app, direct.
+
+- The engine links OpenSSL 3.5.9 built from source (`engine/build-linux.sh`)
+  and needs only glibc. Ubuntu's static libcrypto wasn't used: it pulls in
+  zlib and jitterentropy.
+- Built on 26.04 the binaries need glibc 2.38, which excludes Ubuntu 22.04
+  and Debian 12, so the release workflow builds on Ubuntu 22.04
+  (glibc 2.35).
+- WSLg quirks found while testing (documented in docs/CONNECT.md, not app
+  bugs): a window that opens maximized isn't drawn; Windows' display
+  scaling isn't passed on; new TLS connections inside WSL take seconds.
 
