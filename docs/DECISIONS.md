@@ -362,3 +362,26 @@ Getting there took three drafts, none published:
    then installed over the previous versions on Windows and Android, with
    transfers both ways.
 
+### D23. Download history kept daily on a `stats` branch (2026-11-11)
+
+GitHub shows only a running total per release file, so growth over time
+(downloads this week, after a launch post) is invisible. A scheduled
+workflow (`download-stats.yml`, daily at 00:30 UTC, on every published
+release, and on demand) snapshots every release file's count and keeps:
+
+- `downloads.csv`: date, release, file, platform, running total; one row
+  per file per day.
+- `summary.json`: total, last 7 and last 30 days and a daily series per
+  platform (Android, Windows, Linux), for the landing page.
+- `README.md`: the same as a table.
+
+It lives on its own `stats` branch: daily commits would clutter `main`'s
+history and start test runs (they're marked `[skip ci]` as well). No
+third-party service is involved.
+
+What the numbers are: downloads of release files, not users or installs.
+One person can download several times, test and bot downloads count, and
+nobody is identified. Re-uploading a file resets its GitHub count, so
+recent-window figures never go below zero. Every place that shows the
+numbers says "downloads".
+

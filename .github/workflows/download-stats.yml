@@ -1,0 +1,54 @@
+# Keeps a daily history of how often each release file is downloaded
+# (GitHub only shows a running total). Results go to the `stats` branch,
+# so the daily commits stay out of main's history: downloads.csv,
+# summary.json, README.md. See tools/download-stats.js and
+# docs/DECISIONS.md D23.
+name: download-stats
+
+on:
+  schedule:
+    - cron: "30 0 * * *"      # daily, 00:30 UTC
+  release:
+    types: [published]        # a baseline the moment a release goes out
+  workflow_dispatch:
+
+permissions:
+  contents: write             # push to the stats branch
+
+concurrency:
+  group: download-stats
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: the stats branch (created on the first run)
+        run: |
+          if git ls-remote --exit-code --heads origin stats >/dev/null; then
+            git fetch --depth=1 origin stats
+            git worktree add -B stats stats-out origin/stats
+          else
+            git worktree add --orphan -b stats stats-out
+          fi
+
+      - name: snapshot the download counts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/download-stats.js stats-out
+
+      - name: save it
+        working-directory: stats-out
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nothing changed"
+          else
+            git commit -q -m "Download stats $(date -u +%F) [skip ci]"
+            git push -q origin stats
+          fi
