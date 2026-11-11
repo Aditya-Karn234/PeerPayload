@@ -319,3 +319,23 @@ with the Android app and the Windows app, direct.
   bugs): a window that opens maximized isn't drawn; Windows' display
   scaling isn't passed on; new TLS connections inside WSL take seconds.
 
+### D20. One version for Connect on every platform, from 0.3.0 (2026-11-11)
+
+Connect's desktop app was at 0.2.6 and the Android app at 0.1.5. From the
+first public release they share one version, starting at 0.3.0, and
+releases are tagged `connect-vX.Y.Z` (the prefix keeps Enterprise's own
+versions apart). The release workflow refuses a tag that doesn't match
+both apps' versions.
+
+Why: a release is one thing to the people downloading it; two numbering
+schemes would make "which version do I have?" confusing.
+
+### D21. Releases are drafts until published by hand (2026-11-11)
+
+Pushing a `connect-v*` tag builds the APK, the Windows installer and the
+AppImage on GitHub (Ubuntu 22.04 for Android and Linux), signs the APK,
+checks the signing certificate, writes `SHA256SUMS.txt`, adds a build
+attestation for each file and creates a **draft** release. Nothing is
+public until the draft has been tried and published by hand. Steps in
+docs/RELEASING.md.
+

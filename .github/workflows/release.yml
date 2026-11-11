@@ -1,0 +1,245 @@
+# Builds a PeerPayload Connect release from a tag, on GitHub's machines, so
+# anyone can check that the files came from this repository's source
+# (build attestations) and weren't changed afterwards (checksums).
+#
+#   git tag connect-v0.3.0 && git push origin connect-v0.3.0
+#
+# The result is a DRAFT release: nothing is public until it's reviewed and
+# published by hand (docs/DECISIONS.md D21). Connect only (D15); one
+# version across Android, Windows and Linux (D20).
+#
+# Secrets (Settings > Secrets and variables > Actions), see docs/RELEASING.md:
+#   CONNECT_ANDROID_KEYSTORE_B64     the release keystore (.jks), base64
+#   CONNECT_ANDROID_PROPERTIES_B64   its keystore.properties, base64
+name: release
+
+on:
+  push:
+    tags: ["connect-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: check version
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          tag="${GITHUB_REF_NAME#connect-v}"
+          desktop=$(node -p "require('./connect/desktop/package.json').version")
+          android=$(grep -oP 'versionName = "\K[^"]+' connect/android/app/build.gradle.kts)
+          echo "tag $tag, desktop $desktop, android $android"
+          if [ "$tag" != "$desktop" ] || [ "$tag" != "$android" ]; then
+            echo "::error::the tag, connect/desktop/package.json and the Android versionName must all be the same version"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  android:
+    name: android apk
+    needs: version
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # NDK and OpenSSL downloads, cached between releases.
+      - uses: actions/cache@v4
+        with:
+          path: ~/pp-android-cache
+          key: android-engine-${{ hashFiles('connect/android/engine/build-engine.sh') }}
+
+      - name: build the engine library (NDK, static OpenSSL)
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/src" -v "$HOME/pp-android-cache:/cache" \
+            debian:bookworm bash /src/connect/android/engine/build-engine.sh
+          sudo chown -R "$(id -u):$(id -g)" connect/android/app/src/main/jniLibs
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: signing key from secrets
+        env:
+          KEYSTORE_B64: ${{ secrets.CONNECT_ANDROID_KEYSTORE_B64 }}
+          PROPERTIES_B64: ${{ secrets.CONNECT_ANDROID_PROPERTIES_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$PROPERTIES_B64" ]; then
+            echo "::error::the Android signing secrets aren't set (see docs/RELEASING.md)"
+            exit 1
+          fi
+          mkdir -p connect/android/signing
+          echo "$PROPERTIES_B64" | base64 -d > connect/android/signing/keystore.properties
+          store=$(grep '^storeFile=' connect/android/signing/keystore.properties | cut -d= -f2-)
+          echo "$KEYSTORE_B64" | base64 -d > "connect/android/signing/$store"
+
+      - name: test and build the signed APK
+        working-directory: connect/android
+        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleRelease
+
+      # Refuse an APK signed with anything but the published release key:
+      # it couldn't update existing installs.
+      - name: check the signing certificate
+        run: |
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          cert=$("$apksigner" verify --print-certs connect/android/app/build/outputs/apk/release/app-release.apk | grep -oP 'SHA-256 digest: \K[0-9a-f]+' | head -1)
+          echo "signed with $cert"
+          [ "$cert" = "b91712ae6327eb0b2a489d64ac1929ee292116e585018bc852b21b0b412f8e44" ]
+
+      - name: remove the key from the runner
+        if: always()
+        run: rm -rf connect/android/signing
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: connect/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+  windows:
+    name: windows installer
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Same toolchain as the tests and local builds: MSYS2 MinGW64, static.
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          release: false
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-openssl
+      - run: echo "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
+
+      - name: build the engine
+        run: |
+          cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+      - name: build the installer
+        run: |
+          cd connect/core; npm ci --no-audit --no-fund
+          cd ../desktop; npm ci --no-audit --no-fund
+          npm run build
+          npx electron-builder --win --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: connect/desktop/dist/*.exe
+          if-no-files-found: error
+
+  linux:
+    name: linux appimage
+    needs: version
+    # The oldest supported Ubuntu: binaries need this glibc (2.35) or newer
+    # (docs/DECISIONS.md D19).
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/peerpayload
+          key: linux-openssl-${{ hashFiles('engine/build-linux.sh') }}
+
+      - name: build the engine (OpenSSL inside)
+        run: bash engine/build-linux.sh
+
+      - name: build the AppImage
+        run: |
+          (cd connect/core && npm ci --no-audit --no-fund)
+          cd connect/desktop
+          npm ci --no-audit --no-fund
+          npm run build
+          npx electron-builder --linux --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: connect/desktop/dist/*.AppImage
+          if-no-files-found: error
+
+  release:
+    name: draft release
+    needs: [version, android, windows, linux]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write        # create the draft release
+      id-token: write        # sign the build attestations
+      attestations: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: name the files and write checksums
+        run: |
+          mkdir out
+          cp artifacts/android/app-release.apk "out/PeerPayload-Connect-$VERSION-android.apk"
+          cp artifacts/windows/*.exe "out/PeerPayload-Connect-$VERSION-windows-x64-setup.exe"
+          cp artifacts/linux/*.AppImage "out/PeerPayload-Connect-$VERSION-linux-x86_64.AppImage"
+          (cd out && sha256sum PeerPayload-Connect-* > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: out/PeerPayload-Connect-*
+
+      - name: create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "PeerPayload Connect $VERSION for Android, Windows and Linux."
+            echo
+            echo "Early preview. What's new: see docs/CONNECT.md and the commits since the last release."
+            echo
+            echo "## Downloads"
+            echo
+            echo "| Platform | File |"
+            echo "|---|---|"
+            echo "| Android 8+ | PeerPayload-Connect-$VERSION-android.apk |"
+            echo "| Windows 10/11, 64-bit | PeerPayload-Connect-$VERSION-windows-x64-setup.exe |"
+            echo "| Linux x86-64 (glibc 2.35+) | PeerPayload-Connect-$VERSION-linux-x86_64.AppImage |"
+            echo
+            echo "## Checking a download"
+            echo
+            echo "Every file was built by this repository's release workflow from the tagged source. To check one:"
+            echo
+            echo '```sh'
+            echo "sha256sum -c SHA256SUMS.txt --ignore-missing          # the file wasn't changed"
+            echo "gh attestation verify <file> --repo $GITHUB_REPOSITORY    # and was built here, from this tag"
+            echo '```'
+            echo
+            echo "The Windows installer isn't code-signed, so Windows SmartScreen may warn (\"More info\" > \"Run anyway\") once you've checked it as above. Don't turn off SmartScreen or antivirus."
+            echo
+            echo "The Android app's signing certificate is SHA-256 b91712ae6327eb0b2a489d64ac1929ee292116e585018bc852b21b0b412f8e44."
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" out/* \
+            --draft --title "PeerPayload Connect $VERSION" --notes-file notes.md --verify-tag

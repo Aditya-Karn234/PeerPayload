@@ -90,6 +90,7 @@ docker-compose.yml     local Postgres, and the backend in Docker
 - [docs/ENTERPRISE.md](docs/ENTERPRISE.md): PeerPayload Enterprise, backend, desktop and CLI
 - [docs/ENGINE.md](docs/ENGINE.md): the transfer engine, its flags, performance, tests and diagnostics
 - [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md): what's encrypted, who can see what, known limits
+- [docs/RELEASING.md](docs/RELEASING.md): how Connect releases are built, signed and published
 - [docs/DECISIONS.md](docs/DECISIONS.md): decisions made while open-sourcing the project, and why
 
 ## Security
