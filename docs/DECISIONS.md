@@ -13,7 +13,7 @@ old entries stay.
 | 1 | Open-source ready: license and notices, one `main`, README and docs, security scanning and fixes, Electron upgrade, Android background work | Done 2026-11-11 |
 | 2 | Three real builds (Android APK, Windows EXE, Linux AppImage) and a release workflow | Done 2026-11-11 |
 | 3 | First public release, download tracking, landing page | Done 2026-11-11 (page live once Pages is enabled) |
-| 4 | Launch: demo, hosting upgrade, r/SideProject first, then wider | Not started |
+| 4 | Launch: demo, hosting upgrade, r/SideProject first, then wider | In progress (posted 2026-11-11) |
 | 5 | Later: Google Play, F-Droid, Flathub, more connection options | Not started |
 
 ## Decisions
@@ -398,3 +398,16 @@ no edit) and for `summary.json` from the `stats` branch, shown as
 "N downloads so far ... not the number of users". No analytics, cookies or
 external fonts; without JavaScript every button links to the releases page.
 
+### D25. Listed on AlternativeTo; its badge is hosted here (2026-11-11)
+
+PeerPayload Connect is listed at
+https://alternativeto.net/software/peerpayload-connect/about/, linked as an
+alternative to LocalSend, PairDrop, Warpinator, Blip and others, so people
+looking for those can find it.
+
+The README and the landing page show AlternativeTo's badge, but the image
+is a copy in `site/` and the link has no `utm_` tags, instead of the
+snippet AlternativeTo suggests (their image, tagged link). That snippet
+would make every visitor's browser contact alternativeto.net, which would
+break the landing page's no-trackers promise (D24). AlternativeTo says
+self-hosting the badge is fine.

@@ -26,6 +26,8 @@ built by GitHub from the tagged source, with checksums and a build
 attestation; the release page shows how to check them. Enterprise is
 distributed to the organisation using it, not here.
 
+<a href="https://alternativeto.net/software/peerpayload-connect/about/"><img src="site/alternativeto-badge-compact.svg" alt="PeerPayload Connect on AlternativeTo" width="183" height="62"></a>
+
 ## How it works
 
 - **The engine** (`sender`, `receiver`, C++) moves the files: chunked,
