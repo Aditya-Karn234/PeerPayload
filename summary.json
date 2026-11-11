@@ -1,0 +1,41 @@
+{
+  "updated": "2026-11-11",
+  "trackingSince": "2026-11-11",
+  "note": "Downloads of release files from GitHub, not users or installs. Counts include test and bot downloads. Recent-window numbers are only as old as the tracking.",
+  "total": 6,
+  "platforms": {
+    "Android": {
+      "total": 2,
+      "last7Days": 2,
+      "last30Days": 2,
+      "daily": [
+        {
+          "date": "2026-11-11",
+          "total": 2
+        }
+      ]
+    },
+    "Windows": {
+      "total": 2,
+      "last7Days": 2,
+      "last30Days": 2,
+      "daily": [
+        {
+          "date": "2026-11-11",
+          "total": 2
+        }
+      ]
+    },
+    "Linux": {
+      "total": 2,
+      "last7Days": 2,
+      "last30Days": 2,
+      "daily": [
+        {
+          "date": "2026-11-11",
+          "total": 2
+        }
+      ]
+    }
+  }
+}
