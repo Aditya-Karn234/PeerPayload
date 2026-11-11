@@ -11,8 +11,8 @@ old entries stay.
 |---|---|---|
 | 0 | Decisions: repository, license, hosting, signing, builds | Done 2026-11-10 |
 | 1 | Open-source ready: license and notices, one `main`, README and docs, security scanning and fixes, Electron upgrade, Android background work | Done 2026-11-11 |
-| 2 | Three real builds (Android APK, Windows EXE, Linux AppImage: all working) and a release workflow (next) | In progress |
-| 3 | First public release, checksums, verification steps, download tracking, landing page | Not started |
+| 2 | Three real builds (Android APK, Windows EXE, Linux AppImage) and a release workflow | Done 2026-11-11 |
+| 3 | First public release (done: Connect 0.3.0), download tracking, landing page | In progress |
 | 4 | Launch: demo, hosting upgrade, r/SideProject first, then wider | Not started |
 | 5 | Later: Google Play, F-Droid, Flathub, more connection options | Not started |
 
@@ -338,4 +338,27 @@ checks the signing certificate, writes `SHA256SUMS.txt`, adds a build
 attestation for each file and creates a **draft** release. Nothing is
 public until the draft has been tried and published by hand. Steps in
 docs/RELEASING.md.
+
+### D22. First public release: PeerPayload Connect 0.3.0 (2026-11-11)
+
+Published on GitHub Releases as the latest release (not a pre-release, so
+`releases/latest` links work), with the Android APK, the Windows installer,
+the Linux AppImage, `SHA256SUMS.txt` and a build attestation for each.
+Release notes say what Connect is, what works, the known limits of an
+early preview, and how to check a download.
+
+Getting there took three drafts, none published:
+
+1. Built before the fix for leftover `.incoming` folders: rebuilt to
+   include it.
+2. The Windows app couldn't start ("Cannot find module 'ws'"). The
+   workflow never installed `client-core`'s dependencies; local builds had
+   only worked because this machine had them from earlier. Fixed, and
+   every release now smoke-tests each packaged desktop app (it must load
+   its core code) before the draft is made.
+3. Checked before publishing: checksums, attestations (built by
+   `release.yml` from the tag), the APK's signing certificate, the
+   AppImage's glibc floor (2.34), the smoke test on the downloaded files;
+   then installed over the previous versions on Windows and Android, with
+   transfers both ways.
 

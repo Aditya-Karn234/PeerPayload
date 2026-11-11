@@ -13,16 +13,18 @@ Two products share one transfer engine:
 |---|---|---|
 | For | Anyone: your own devices, friends, family | Teams in an organisation |
 | Accounts | None. Each device makes its own key; you pair devices with a one-time link or QR code | Admin-created accounts, a directory of who's online, an audit log |
-| Apps | Windows, Android (Linux AppImage coming) | Windows desktop (Linux AppImage configured), CLI |
+| Apps | Android, Windows, Linux | Windows desktop (Linux AppImage configured), CLI |
 | Servers | A mailbox for small encrypted messages, and a relay | A backend with Postgres, and a relay |
-| Status | Early preview: desktop 0.2.6, Android 0.1.4 | Released: 1.2.1 |
+| Status | Early preview: 0.3.0 on every platform | Released: 1.2.1 |
 | Guide | [docs/CONNECT.md](docs/CONNECT.md) | [docs/ENTERPRISE.md](docs/ENTERPRISE.md) |
 
 ## Downloads
 
-There's no public release yet: the first one (Connect for Android,
-Windows and Linux) is being prepared, with checksums and build
-attestations. Until then, build from source as described below.
+**PeerPayload Connect: [latest release](https://github.com/Aditya-Karn234/PeerPayload/releases/latest)**
+for Android (APK), Windows (installer) and Linux (AppImage). Every file is
+built by GitHub from the tagged source, with checksums and a build
+attestation; the release page shows how to check them. Enterprise is
+distributed to the organisation using it, not here.
 
 ## How it works
 
