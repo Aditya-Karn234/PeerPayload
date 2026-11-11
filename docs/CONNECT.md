@@ -21,14 +21,21 @@ TLS with those keys, directly or through the relay.
 To try it on one machine with two devices:
 
 ```sh
-cd connect/mailbox && npm start                      # mailbox on :4300
-cd connect/desktop && npm install && npm run build
+(cd client-core && npm ci) && (cd connect/core && npm ci)   # the app's local packages
+cd connect/mailbox && npm ci && npm start             # mailbox on :4300
+cd connect/desktop && npm ci && npm run build
 CONNECT_USER_DATA=/tmp/alice PEERPAYLOAD_MAILBOX=http://localhost:4300 npx electron .
 CONNECT_USER_DATA=/tmp/bob   PEERPAYLOAD_MAILBOX=http://localhost:4300 npx electron .
 ```
 
 `npm run test:ui` in `connect/desktop` drives two app windows through
 setup, pairing and a transfer.
+
+The app links two local packages, `connect/core` and, under it,
+`client-core`. Each needs its own `npm ci`: without `client-core`'s, a
+packaged app builds but can't start ("Cannot find module 'ws'"). The
+release workflow checks every packaged app loads its core code before
+publishing it.
 
 ## How it behaves
 
@@ -89,7 +96,7 @@ root:
 
 ```sh
 engine/build-linux.sh                      # the engine, with OpenSSL built in
-(cd connect/core && npm ci)
+(cd client-core && npm ci) && (cd connect/core && npm ci)
 cd connect/desktop && npm ci && npm run build:linux
 # -> connect/desktop/dist/PeerPayload Connect-<version>.AppImage
 ```

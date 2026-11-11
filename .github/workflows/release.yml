@@ -135,12 +135,25 @@ jobs:
           cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel
 
+      # Every local package the app links to needs its own dependencies
+      # installed: connect-core, and client-core under it (ws, protocol).
+      # Without client-core's, the app built but couldn't start.
       - name: build the installer
         run: |
-          cd connect/core; npm ci --no-audit --no-fund
+          cd client-core; npm ci --no-audit --no-fund
+          cd ../connect/core; npm ci --no-audit --no-fund
           cd ../desktop; npm ci --no-audit --no-fund
           npm run build
           npx electron-builder --win --publish never
+
+      # The packaged app, run as plain Node, must load its core code and
+      # everything that needs: a missing dependency fails here, not on
+      # someone's PC.
+      - name: smoke test the packaged app
+        working-directory: connect/desktop/dist/win-unpacked
+        shell: bash
+        run: |
+          ELECTRON_RUN_AS_NODE=1 "./PeerPayload Connect.exe" -e "require(require('path').join(process.resourcesPath, 'app.asar', 'node_modules', 'connect-core')); console.log('connect-core loads')"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -171,11 +184,17 @@ jobs:
 
       - name: build the AppImage
         run: |
+          (cd client-core && npm ci --no-audit --no-fund)
           (cd connect/core && npm ci --no-audit --no-fund)
           cd connect/desktop
           npm ci --no-audit --no-fund
           npm run build
           npx electron-builder --linux --publish never
+
+      - name: smoke test the packaged app
+        working-directory: connect/desktop/dist/linux-unpacked
+        run: |
+          ELECTRON_RUN_AS_NODE=1 ./peerpayload-connect-desktop -e "require(require('path').join(process.resourcesPath, 'app.asar', 'node_modules', 'connect-core')); console.log('connect-core loads')"
 
       - uses: actions/upload-artifact@v4
         with:
