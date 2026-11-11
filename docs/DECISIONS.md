@@ -12,7 +12,7 @@ old entries stay.
 | 0 | Decisions: repository, license, hosting, signing, builds | Done 2026-11-10 |
 | 1 | Open-source ready: license and notices, one `main`, README and docs, security scanning and fixes, Electron upgrade, Android background work | Done 2026-11-11 |
 | 2 | Three real builds (Android APK, Windows EXE, Linux AppImage) and a release workflow | Done 2026-11-11 |
-| 3 | First public release (done: Connect 0.3.0), download tracking, landing page | In progress |
+| 3 | First public release, download tracking, landing page | Done 2026-11-11 (page live once Pages is enabled) |
 | 4 | Launch: demo, hosting upgrade, r/SideProject first, then wider | Not started |
 | 5 | Later: Google Play, F-Droid, Flathub, more connection options | Not started |
 
@@ -384,4 +384,17 @@ One person can download several times, test and bot downloads count, and
 nobody is identified. Re-uploading a file resets its GitHub count, so
 recent-window figures never go below zero. Every place that shows the
 numbers says "downloads".
+
+### D24. A landing page on GitHub Pages, with no trackers (2026-11-11)
+
+`site/index.html`, published by `.github/workflows/pages.yml` at
+https://aditya-karn234.github.io/PeerPayload/. One static page: what
+Connect is, how it works, downloads for each platform (the visitor's own
+first), security and how to check a download, and the early-preview
+limits. It uses the apps' design tokens and the SVG logo from `branding/`.
+
+When it loads it asks GitHub for the latest release (so new releases need
+no edit) and for `summary.json` from the `stats` branch, shown as
+"N downloads so far ... not the number of users". No analytics, cookies or
+external fonts; without JavaScript every button links to the releases page.
 

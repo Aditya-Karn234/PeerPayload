@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PeerPayload Connect — send files device to device</title>
+<meta name="description" content="Send files and folders straight from one device to another. No account, no cloud. End-to-end encrypted, open source, for Android, Windows and Linux.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<meta property="og:title" content="PeerPayload Connect">
+<meta property="og:description" content="Send files device to device. No account, no cloud. Open source, for Android, Windows and Linux.">
+<style>
+  /* The apps' design tokens (packages/ui/src/theme.css). */
+  :root {
+    --page: #f4f1e8; --surface: #fbf9f4; --surface-2: #ece8de;
+    --ink: #1a1a1a; --ink-2: #5c5d57; --ink-3: #73746e;
+    --border: #d5d2ca; --accent: #ff6818; --accent-hover: #ee5a0c; --accent-soft: rgb(255 104 24 / 0.11);
+    --good: #1f8a58;
+    --sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #151615; --surface: #1d1f1e; --surface-2: #262928;
+      --ink: #f4f1e8; --ink-2: #b3b2aa; --ink-3: #8b8c85;
+      --border: #343737; --accent-soft: rgb(255 104 24 / 0.14); --good: #3cbf7f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 16px/1.6 var(--sans); }
+  a { color: inherit; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+  header.top { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; }
+  .brand img { width: 32px; height: 32px; }
+  .brand span b { color: var(--accent); }
+  .top nav a { margin-left: 20px; color: var(--ink-2); text-decoration: none; font-size: 15px; }
+  .top nav a:hover { color: var(--ink); }
+
+  .hero { display: grid; grid-template-columns: 1.3fr 1fr; gap: 48px; align-items: center; padding: 48px 0 56px; }
+  .eyebrow { font: 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+  h1 { font-size: clamp(34px, 5vw, 52px); line-height: 1.08; letter-spacing: -0.02em; margin: 10px 0 16px; }
+  .lead { font-size: 19px; color: var(--ink-2); max-width: 34em; margin: 0 0 28px; }
+  .hero-art { width: 100%; max-width: 340px; justify-self: center; filter: drop-shadow(0 18px 40px rgb(0 0 0 / .18)); }
+
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn { display: inline-flex; align-items: center; gap: 10px; padding: 13px 20px; border-radius: 4px; font-weight: 600; text-decoration: none; border: 1px solid var(--border); background: var(--surface); }
+  .btn:hover { background: var(--surface-2); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #1a1a1a; }
+  .btn.primary:hover { background: var(--accent-hover); }
+  .btn small { font: 12px var(--mono); opacity: .75; font-weight: 400; }
+  .meta { margin-top: 14px; font-size: 14px; color: var(--ink-3); }
+  .meta a { color: var(--ink-2); }
+
+  section { padding: 44px 0; border-top: 1px solid var(--border); }
+  h2 { font-size: 26px; letter-spacing: -0.01em; margin: 0 0 22px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 20px; }
+  .card h3 { font-size: 17px; margin: 0 0 6px; }
+  .card p { margin: 0; color: var(--ink-2); font-size: 15px; }
+  .num { font: 12px var(--mono); color: var(--accent); letter-spacing: .1em; }
+
+  .platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .platform { display: flex; flex-direction: column; gap: 10px; }
+  .platform .btn { justify-content: center; }
+  .platform p { margin: 0; font-size: 14px; color: var(--ink-2); }
+
+  ul.plain { padding-left: 20px; margin: 0; color: var(--ink-2); }
+  ul.plain li { margin: 6px 0; }
+  pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 14px 16px; overflow-x: auto; font: 13px/1.5 var(--mono); }
+  code { font-family: var(--mono); font-size: .92em; }
+  .note { background: var(--accent-soft); border-left: 3px solid var(--accent); padding: 12px 16px; border-radius: 2px; color: var(--ink-2); font-size: 15px; }
+  footer { padding: 32px 0 48px; color: var(--ink-3); font-size: 14px; border-top: 1px solid var(--border); }
+  footer a { color: var(--ink-2); }
+
+  @media (max-width: 760px) {
+    .hero { grid-template-columns: 1fr; padding-top: 24px; }
+    .hero-art { max-width: 200px; order: -1; }
+    .grid3, .platforms { grid-template-columns: 1fr; }
+    .top nav a:not(.gh) { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./"><img src="icon.svg" alt=""><span>Peer<b>Payload</b> Connect</span></a>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#download">Download</a>
+      <a href="#security">Security</a>
+      <a class="gh" href="https://github.com/Aditya-Karn234/PeerPayload">GitHub</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <div>
+      <div class="eyebrow">Open source · early preview</div>
+      <h1>Send files straight from one device to another.</h1>
+      <p class="lead">No account, no sign-up, no cloud storage. Pair your phone and computers once with a QR code, then send files and folders of any size, end-to-end encrypted.</p>
+      <div class="cta">
+        <a class="btn primary" id="main-download" href="https://github.com/Aditya-Karn234/PeerPayload/releases/latest">Download</a>
+        <a class="btn" href="#download">All platforms</a>
+      </div>
+      <div class="meta" id="release-meta">Android · Windows · Linux</div>
+    </div>
+    <img class="hero-art" src="icon.svg" alt="PeerPayload Connect">
+  </div>
+
+  <section id="how">
+    <h2>How it works</h2>
+    <div class="grid3">
+      <div class="card"><div class="num">01</div><h3>Pair once</h3><p>Each device makes its own key the first time it runs. Pair two devices by scanning a QR code or opening an invite link; both show the same safety code.</p></div>
+      <div class="card"><div class="num">02</div><h3>Send directly</h3><p>Files go straight between the two devices when they can reach each other, and otherwise through a relay that only ever sees encrypted data.</p></div>
+      <div class="card"><div class="num">03</div><h3>Pause, resume, move on</h3><p>Every chunk is checked. Pause from either side, resume later, or lose the connection: it picks up where it stopped.</p></div>
+    </div>
+  </section>
+
+  <section id="download">
+    <h2>Download</h2>
+    <div class="platforms">
+      <div class="platform"><a class="btn" data-platform="Android" href="https://github.com/Aditya-Karn234/PeerPayload/releases/latest">Android</a><p>Android 8 or newer. Open the APK on your phone and allow installing from that app when asked.</p></div>
+      <div class="platform"><a class="btn" data-platform="Windows" href="https://github.com/Aditya-Karn234/PeerPayload/releases/latest">Windows</a><p>Windows 10/11, 64-bit. The installer isn't code-signed yet, so SmartScreen may ask: check the file first (below), then "More info" › "Run anyway".</p></div>
+      <div class="platform"><a class="btn" data-platform="Linux" href="https://github.com/Aditya-Karn234/PeerPayload/releases/latest">Linux</a><p>AppImage for Ubuntu 22.04, Debian 12 or newer. <code>chmod +x</code> it, then run it (some systems need <code>libfuse2</code>).</p></div>
+    </div>
+    <p class="meta" id="download-count"></p>
+  </section>
+
+  <section id="security">
+    <h2>Security and trust</h2>
+    <div class="grid3">
+      <div class="card"><h3>End-to-end encrypted</h3><p>Devices pin each other's keys: mutual TLS for files, sealed messages for pairing and offers. The mailbox and relay can't read or alter them.</p></div>
+      <div class="card"><h3>No accounts</h3><p>Keys are made and kept on your devices. The servers see which devices talk and when, never what they send. Details in the <a href="https://github.com/Aditya-Karn234/PeerPayload/blob/main/docs/SECURITY_MODEL.md">security model</a>.</p></div>
+      <div class="card"><h3>Built in the open</h3><p>Apache-2.0 licensed. Every release file is built by GitHub from the tagged source, with checksums and a build attestation you can check.</p></div>
+    </div>
+    <p>To check a download came from this source and wasn't changed:</p>
+<pre>sha256sum -c SHA256SUMS.txt --ignore-missing
+gh attestation verify &lt;file&gt; --repo Aditya-Karn234/PeerPayload</pre>
+    <p class="note"><b>Early preview.</b> It works, and it's tested on real devices, but it hasn't had an independent security audit. The free hosted servers sleep when idle, so the first pairing after a quiet spell can take up to a minute. Not yet: iOS and macOS apps.</p>
+  </section>
+
+  <footer>
+    <p>PeerPayload Connect is open source under the Apache License 2.0. Source, issues and releases on <a href="https://github.com/Aditya-Karn234/PeerPayload">GitHub</a>. Found a security problem? Please <a href="https://github.com/Aditya-Karn234/PeerPayload/security/policy">report it privately</a>.</p>
+    <p>This page has no trackers or cookies; it asks GitHub for the latest release and download counts.</p>
+  </footer>
+</div>
+
+<script>
+  // Download links from the latest release, so a new release needs no edit
+  // here; the visitor's platform first. Without JavaScript or if GitHub's
+  // API is unavailable, every button goes to the releases page.
+  const REPO = "Aditya-Karn234/PeerPayload";
+  const platformOf = (name) => /\.apk$/i.test(name) ? "Android" : /\.exe$/i.test(name) ? "Windows" : /\.AppImage$/i.test(name) ? "Linux" : null;
+  const ua = navigator.userAgent;
+  const mine = /Android/i.test(ua) ? "Android" : /Windows/i.test(ua) ? "Windows" : /Linux|X11/i.test(ua) ? "Linux" : null;
+  const mb = (bytes) => `${Math.round(bytes / 1048576)} MB`;
+
+  fetch(`https://api.github.com/repos/${REPO}/releases/latest`).then((r) => r.ok ? r.json() : Promise.reject()).then((release) => {
+    const version = release.tag_name.replace(/^connect-v/, "");
+    const files = {};
+
+    for (const asset of release.assets) {
+      const p = platformOf(asset.name);
+      if (p) files[p] = asset;
+    }
+
+    for (const a of document.querySelectorAll("[data-platform]")) {
+      const f = files[a.dataset.platform];
+      if (f) { a.href = f.browser_download_url; a.innerHTML = `${a.dataset.platform} <small>${mb(f.size)}</small>`; }
+    }
+
+    const main = document.getElementById("main-download");
+    if (mine && files[mine]) { main.href = files[mine].browser_download_url; main.textContent = `Download for ${mine}`; }
+
+    document.getElementById("release-meta").innerHTML =
+      `Version ${version} · ${new Date(release.published_at).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })} · <a href="${release.html_url}">release notes and checksums</a>`;
+  }).catch(() => {});
+
+  // Counted daily by .github/workflows/download-stats.yml. Downloads, not users.
+  fetch(`https://raw.githubusercontent.com/${REPO}/stats/summary.json`).then((r) => r.ok ? r.json() : Promise.reject()).then((s) => {
+    if (s.total > 0)
+      document.getElementById("download-count").textContent = `${s.total.toLocaleString()} downloads so far (release files, counted daily since ${s.trackingSince}; not the number of users).`;
+  }).catch(() => {});
+</script>
+</body>
+</html>
