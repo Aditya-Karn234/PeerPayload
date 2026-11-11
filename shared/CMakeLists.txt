@@ -1,3 +1,14 @@
+# Release builds of the desktop apps for Linux (the AppImage) carry OpenSSL
+# inside the engine, so it runs on distributions with a different OpenSSL
+# (or none). Only OpenSSL: a fully -static glibc binary breaks getaddrinfo()
+# (see sender/CMakeLists.txt). Off by default; the backend's Docker image
+# links the system OpenSSL as before.
+option(PEERPAYLOAD_STATIC_OPENSSL "Link OpenSSL statically on Linux" OFF)
+
+if(PEERPAYLOAD_STATIC_OPENSSL AND NOT WIN32)
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+endif()
+
 find_package(OpenSSL REQUIRED COMPONENTS SSL Crypto)
 
 add_library(shared INTERFACE)

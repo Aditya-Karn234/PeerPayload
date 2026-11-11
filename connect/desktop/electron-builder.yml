@@ -15,14 +15,10 @@ files:
 
 # The engine: sender/receiver move the bytes, ppkeygen creates the device
 # identity on first run. Read from resources/engine/ (src/main/config.js).
+# The engine differs per OS, so it's listed under win/linux below; these
+# apply to every build. Licences: ours, and those of everything the app
+# includes.
 extraResources:
-  - from: ../../build/sender/sender.exe
-    to: engine/sender.exe
-  - from: ../../build/receiver/receiver.exe
-    to: engine/receiver.exe
-  - from: ../../build/engine/ppkeygen.exe
-    to: engine/ppkeygen.exe
-  # Licences: ours, and those of everything the app includes.
   - from: ../../LICENSE
     to: legal/LICENSE
   - from: ../../NOTICE
@@ -44,6 +40,13 @@ win:
   target:
     - target: nsis
       arch: [x64]
+  extraResources:
+    - from: ../../build/sender/sender.exe
+      to: engine/sender.exe
+    - from: ../../build/receiver/receiver.exe
+      to: engine/receiver.exe
+    - from: ../../build/engine/ppkeygen.exe
+      to: engine/ppkeygen.exe
 
 nsis:
   # Removes the peerpayload:// link registration on uninstall.
@@ -58,3 +61,11 @@ linux:
     - target: AppImage
       arch: [x64]
   category: Network
+  # Built by engine/build-linux.sh, with OpenSSL inside.
+  extraResources:
+    - from: ../../build/sender/sender
+      to: engine/sender
+    - from: ../../build/receiver/receiver
+      to: engine/receiver
+    - from: ../../build/engine/ppkeygen
+      to: engine/ppkeygen
