@@ -247,6 +247,8 @@ jobs:
             echo "| Windows 10/11, 64-bit | PeerPayload-Connect-$VERSION-windows-x64-setup.exe |"
             echo "| Linux x86-64 (glibc 2.35+) | PeerPayload-Connect-$VERSION-linux-x86_64.AppImage |"
             echo
+            echo "Linux: \`chmod +x\` the AppImage, then run it. If it doesn't start, install FUSE 2 (\`libfuse2t64\` on Ubuntu 24.04+, \`libfuse2\` on 22.04) or run it with \`--appimage-extract-and-run\`."
+            echo
             echo "## Checking a download"
             echo
             echo "Every file was built by this repository's release workflow from the tagged source. To check one:"

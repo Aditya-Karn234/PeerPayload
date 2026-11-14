@@ -411,3 +411,19 @@ snippet AlternativeTo suggests (their image, tagged link). That snippet
 would make every visitor's browser contact alternativeto.net, which would
 break the landing page's no-trackers promise (D24). AlternativeTo says
 self-hosting the badge is fine.
+
+### D26. In the AppImage catalog; FUSE 2 note for Linux users (2026-11-14)
+
+The AppImage project's discovery bot found the 0.3.0 AppImage and added it
+to the AppImageHub catalog (AppImage/appimage.github.io PR #11986, merged
+after their automated launch-and-screenshot test passed). Nothing was
+submitted by hand.
+
+Their test noted the AppImage uses the older runtime, which needs FUSE 2
+(`libfuse2`), not installed by default on recent Ubuntu. Instead of
+changing the build, the README and the release notes now say how to run
+it anyway (install `libfuse2t64` / `libfuse2`, or
+`--appimage-extract-and-run`). Their other remarks are left for later:
+"linux" in the file name (cosmetic; renaming would change download links
+and the stats) and no zsync update information (users re-download from the
+release page).
