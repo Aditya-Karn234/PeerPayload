@@ -8,3 +8,6 @@ date,tag,asset,platform,downloads
 2026-11-13,connect-v0.3.0,PeerPayload-Connect-0.3.0-android.apk,Android,19
 2026-11-13,connect-v0.3.0,PeerPayload-Connect-0.3.0-linux-x86_64.AppImage,Linux,10
 2026-11-13,connect-v0.3.0,PeerPayload-Connect-0.3.0-windows-x64-setup.exe,Windows,17
+2026-11-14,connect-v0.3.0,PeerPayload-Connect-0.3.0-android.apk,Android,73
+2026-11-14,connect-v0.3.0,PeerPayload-Connect-0.3.0-linux-x86_64.AppImage,Linux,20
+2026-11-14,connect-v0.3.0,PeerPayload-Connect-0.3.0-windows-x64-setup.exe,Windows,57
