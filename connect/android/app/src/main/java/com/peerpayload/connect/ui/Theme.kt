@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -63,6 +64,23 @@ val Mono = FontFamily.Monospace
 /** Small uppercase mono label, the desktop's section/eyebrow style. */
 val LabelStyle = TextStyle(fontFamily = Mono, fontSize = 11.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Medium)
 
+/**
+ * Material's type scale with every fixed line height removed, so each line is
+ * as tall as the phone's actual font needs. Fixed heights (e.g. 20 sp for
+ * button labels) clipped the bottom of the text on phones whose system font
+ * is taller or sits lower than Roboto (reported on a Nothing phone).
+ */
+private val FitTypography = Typography().run {
+    fun TextStyle.fit() = copy(lineHeight = TextUnit.Unspecified)
+    Typography(
+        displayLarge = displayLarge.fit(), displayMedium = displayMedium.fit(), displaySmall = displaySmall.fit(),
+        headlineLarge = headlineLarge.fit(), headlineMedium = headlineMedium.fit(), headlineSmall = headlineSmall.fit(),
+        titleLarge = titleLarge.fit(), titleMedium = titleMedium.fit(), titleSmall = titleSmall.fit(),
+        bodyLarge = bodyLarge.fit(), bodyMedium = bodyMedium.fit(), bodySmall = bodySmall.fit(),
+        labelLarge = labelLarge.fit(), labelMedium = labelMedium.fit(), labelSmall = labelSmall.fit(),
+    )
+}
+
 @Composable
 fun ConnectTheme(content: @Composable () -> Unit) {
     val t = if (isSystemInDarkTheme()) Dark else Light
@@ -90,6 +108,6 @@ fun ConnectTheme(content: @Composable () -> Unit) {
     )
 
     androidx.compose.runtime.CompositionLocalProvider(LocalTokens provides t) {
-        MaterialTheme(colorScheme = scheme, shapes = shapes, typography = Typography(), content = content)
+        MaterialTheme(colorScheme = scheme, shapes = shapes, typography = FitTypography, content = content)
     }
 }

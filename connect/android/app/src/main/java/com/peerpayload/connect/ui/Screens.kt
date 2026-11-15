@@ -20,8 +20,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -325,10 +327,10 @@ private fun OfferBanner(x: Transfer, vm: ConnectViewModel, onAccepted: () -> Uni
     val names = x.files.joinToString(", ") { it.name } + if (x.fileCount > x.files.size) " ..." else ""
 
     Row(
-        Modifier.fillMaxWidth().background(t.surface).padding(start = 0.dp),
+        Modifier.fillMaxWidth().height(IntrinsicSize.Min).background(t.surface).padding(start = 0.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.width(3.dp).height(64.dp).background(t.accent))
+        Box(Modifier.width(3.dp).fillMaxHeight().background(t.accent))
         Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 8.dp)) {
             Label("Incoming from ${x.peerName}")
             Text(names, color = t.ink, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
