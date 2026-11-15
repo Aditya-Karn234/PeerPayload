@@ -30,6 +30,8 @@ On Linux: `chmod +x` the AppImage, then run it. If it doesn't start, install
 FUSE 2 (`sudo apt install libfuse2t64` on Ubuntu 24.04+, `libfuse2` on
 22.04) or run it with `--appimage-extract-and-run`.
 
+Listed on [AppImageHub](https://appimage.github.io/PeerPayload/) and AlternativeTo:
+
 <a href="https://alternativeto.net/software/peerpayload-connect/about/"><img src="site/alternativeto-badge-compact.svg" alt="PeerPayload Connect on AlternativeTo" width="183" height="62"></a>
 
 ## How it works

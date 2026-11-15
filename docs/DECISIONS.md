@@ -417,7 +417,9 @@ self-hosting the badge is fine.
 The AppImage project's discovery bot found the 0.3.0 AppImage and added it
 to the AppImageHub catalog (AppImage/appimage.github.io PR #11986, merged
 after their automated launch-and-screenshot test passed). Nothing was
-submitted by hand.
+submitted by hand. Its page, https://appimage.github.io/PeerPayload/,
+went live on 2026-11-15 and is linked from the README and the landing page
+as plain text (no third-party image, per D24).
 
 Their test noted the AppImage uses the older runtime, which needs FUSE 2
 (`libfuse2`), not installed by default on recent Ubuntu. Instead of
