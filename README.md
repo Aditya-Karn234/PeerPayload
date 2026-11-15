@@ -30,6 +30,11 @@ On Linux: `chmod +x` the AppImage, then run it. If it doesn't start, install
 FUSE 2 (`sudo apt install libfuse2t64` on Ubuntu 24.04+, `libfuse2` on
 22.04) or run it with `--appimage-extract-and-run`.
 
+On Android you can also install it with [Obtainium](https://obtainium.imranr.dev/),
+which takes new versions straight from this repository's releases:
+
+<a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/Aditya-Karn234/PeerPayload"><img src="site/obtainium-badge.png" alt="Get it on Obtainium" width="160" height="62"></a>
+
 Listed on [AppImageHub](https://appimage.github.io/PeerPayload/) and AlternativeTo:
 
 <a href="https://alternativeto.net/software/peerpayload-connect/about/"><img src="site/alternativeto-badge-compact.svg" alt="PeerPayload Connect on AlternativeTo" width="183" height="62"></a>

@@ -1,0 +1,1 @@
+First public release (0.3.0): pairing by QR code or link with a safety code, direct/reversed/relay connections with end-to-end mutual TLS, pause and resume, Share from other apps, background transfers, optional "Stay ready to receive".

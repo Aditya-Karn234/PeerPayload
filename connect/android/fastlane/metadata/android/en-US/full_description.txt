@@ -1,0 +1,28 @@
+PeerPayload Connect sends files and folders straight from one device to another: phone to PC, PC to phone, on the same network or across networks.
+
+<b>No account</b>
+<ul>
+<li>Each device makes its own key the first time it opens. No sign-up, email or phone number.</li>
+<li>Pair a device once with a QR code or a one-time link, and compare the safety code both screens show.</li>
+<li>Only paired devices can send you anything, and every offer needs your Accept.</li>
+</ul>
+
+<b>Works wherever your devices are</b>
+<ul>
+<li>Each transfer tries a direct connection, then has the receiver connect out to the sender, then falls back to a relay.</li>
+<li>All three use mutual TLS between the two devices, each pinning the other's key. The relay only passes encrypted bytes.</li>
+<li>The mailbox and relay servers are open source; you can run your own and set them in Settings.</li>
+</ul>
+
+<b>Built for big files</b>
+<ul>
+<li>Every chunk is checked with SHA-256.</li>
+<li>Pause and resume from either side, even after a restart.</li>
+<li>Share files from any app, with a review step before sending.</li>
+<li>Transfers continue in the background with a progress notification.</li>
+<li>Optional "Stay ready to receive": offers arrive with Accept/Decline even when the app is closed, without Google's push service.</li>
+</ul>
+
+Desktop apps for Windows and Linux are on the project page. Free and open source under the Apache License 2.0, with no ads, tracking or analytics.
+
+Early preview: no independent security audit yet, and the free hosted servers can take up to a minute to wake after being idle.

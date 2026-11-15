@@ -429,3 +429,27 @@ it anyway (install `libfuse2t64` / `libfuse2`, or
 "linux" in the file name (cosmetic; renaming would change download links
 and the stats) and no zsync update information (users re-download from the
 release page).
+
+### D27. More install channels: Obtainium, IzzyOnDroid, winget (2026-11-15)
+
+To reach people through the tools they already use to install apps, without
+changing how releases are built:
+
+- **Obtainium** (Android): needs no submission; it installs and updates
+  from this repository's GitHub releases. The README and the landing page
+  link to it (badge copied into `site/`, as in D25).
+- **IzzyOnDroid** (F-Droid-compatible repository): inclusion requested; it
+  takes the APK from the GitHub releases. Store text, icon and screenshots
+  are in `connect/android/fastlane/metadata/android/en-US/` (the layout
+  F-Droid uses too). The APK no longer includes the Android build tools'
+  "dependency metadata" block (`dependenciesInfo` off): it is encrypted for
+  Google only, and F-Droid and IzzyOnDroid ask for it to be removed. This
+  applies from the next release.
+- **winget** (Windows): a manifest (`AdityaKarn.PeerPayloadConnect`,
+  per-user NSIS installer) submitted to `microsoft/winget-pkgs`. New
+  versions need a new manifest; automating that in the release workflow
+  can come later.
+
+F-Droid's main repository and Flathub need builds from source and are left
+for later.
+

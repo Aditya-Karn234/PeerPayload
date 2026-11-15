@@ -51,6 +51,13 @@ android {
         }
     }
 
+    // No Google-encrypted "dependency metadata" block in the APK/bundle:
+    // nobody but Google can read it, and F-Droid/IzzyOnDroid ask for it off.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
