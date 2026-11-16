@@ -1,13 +1,13 @@
 {
-  "updated": "2026-11-15",
+  "updated": "2026-11-16",
   "trackingSince": "2026-11-11",
   "note": "Downloads of release files from GitHub, not users or installs. Counts include test and bot downloads. Recent-window numbers are only as old as the tracking.",
-  "total": 216,
+  "total": 236,
   "platforms": {
     "Android": {
-      "total": 105,
-      "last7Days": 105,
-      "last30Days": 105,
+      "total": 117,
+      "last7Days": 117,
+      "last30Days": 117,
       "daily": [
         {
           "date": "2026-11-11",
@@ -28,13 +28,17 @@
         {
           "date": "2026-11-15",
           "total": 105
+        },
+        {
+          "date": "2026-11-16",
+          "total": 117
         }
       ]
     },
     "Windows": {
-      "total": 76,
-      "last7Days": 76,
-      "last30Days": 76,
+      "total": 82,
+      "last7Days": 82,
+      "last30Days": 82,
       "daily": [
         {
           "date": "2026-11-11",
@@ -55,13 +59,17 @@
         {
           "date": "2026-11-15",
           "total": 76
+        },
+        {
+          "date": "2026-11-16",
+          "total": 82
         }
       ]
     },
     "Linux": {
-      "total": 35,
-      "last7Days": 35,
-      "last30Days": 35,
+      "total": 37,
+      "last7Days": 37,
+      "last30Days": 37,
       "daily": [
         {
           "date": "2026-11-11",
@@ -82,6 +90,10 @@
         {
           "date": "2026-11-15",
           "total": 35
+        },
+        {
+          "date": "2026-11-16",
+          "total": 37
         }
       ]
     }
