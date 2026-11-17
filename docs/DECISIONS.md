@@ -437,7 +437,10 @@ changing how releases are built:
 
 - **Obtainium** (Android): needs no submission; it installs and updates
   from this repository's GitHub releases. The README and the landing page
-  link to it (badge copied into `site/`, as in D25).
+  link to it (badge copied into `site/`, as in D25). The link carries the setting
+  "trim version string" `[0-9]+\.[0-9]+\.[0-9]+`: Obtainium reads the version
+  from the tag (`connect-v0.3.0`) and otherwise always shows an update.
+  Tested on a phone 2026-11-17.
 - **IzzyOnDroid** (F-Droid-compatible repository): inclusion requested; it
   takes the APK from the GitHub releases. Store text, icon and screenshots
   are in `connect/android/fastlane/metadata/android/en-US/` (the layout
