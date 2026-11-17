@@ -33,7 +33,7 @@ FUSE 2 (`sudo apt install libfuse2t64` on Ubuntu 24.04+, `libfuse2` on
 On Android you can also install it with [Obtainium](https://obtainium.imranr.dev/),
 which takes new versions straight from this repository's releases:
 
-<a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/Aditya-Karn234/PeerPayload"><img src="site/obtainium-badge.png" alt="Get it on Obtainium" width="160" height="62"></a>
+<a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22com.peerpayload.connect%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FAditya-Karn234%2FPeerPayload%22%2C%22author%22%3A%22Aditya-Karn234%22%2C%22name%22%3A%22PeerPayload%20Connect%22%2C%22additionalSettings%22%3A%22%7B%5C%22fallbackToOlderReleases%5C%22%3A%20true%2C%20%5C%22versionExtractionRegEx%5C%22%3A%20%5C%22%5B0-9%5D%2B%5C%5C%5C%5C.%5B0-9%5D%2B%5C%5C%5C%5C.%5B0-9%5D%2B%5C%22%2C%20%5C%22matchGroupToUse%5C%22%3A%20%5C%22%5C%22%7D%22%7D"><img src="site/obtainium-badge.png" alt="Get it on Obtainium" width="160" height="62"></a>
 
 Listed on [AppImageHub](https://appimage.github.io/PeerPayload/) and AlternativeTo:
 
