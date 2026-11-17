@@ -15,7 +15,7 @@ Two products share one transfer engine:
 | Accounts | None. Each device makes its own key; you pair devices with a one-time link or QR code | Admin-created accounts, a directory of who's online, an audit log |
 | Apps | Android, Windows, Linux | Windows desktop (Linux AppImage configured), CLI |
 | Servers | A mailbox for small encrypted messages, and a relay | A backend with Postgres, and a relay |
-| Status | Early preview: 0.3.0 on every platform | Released: 1.2.1 |
+| Status | Early preview: 0.3.0 on every platform | Released: 1.2.1 (no hosted server at the moment; deploy your own) |
 | Guide | [docs/CONNECT.md](docs/CONNECT.md) | [docs/ENTERPRISE.md](docs/ENTERPRISE.md) |
 
 ## Downloads

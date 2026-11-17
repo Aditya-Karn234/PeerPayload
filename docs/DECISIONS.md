@@ -460,3 +460,17 @@ changing how releases are built:
 F-Droid's main repository and Flathub need builds from source and are left
 for later.
 
+### D28. Enterprise is no longer hosted; Connect is the hosted product (2026-11-17)
+
+Merging #7 made Render redeploy the Enterprise backend, which then failed
+to start: `P1001: Can't reach database server`. The free Render Postgres
+database had expired, so the earlier version could not run either. The code
+was fine; Prisma loaded its configuration and schema normally.
+
+Connect is the public product, so instead of paying for a database the
+Enterprise services on Render (`orgxfer-backend`, `orgxfer-relay`) are
+suspended and `orgxfer-db` is left to expire. The code, `render.yaml` and
+the 1.2.1 apps stay in the repository; anyone can deploy their own backend.
+Connect's mailbox and relay are separate services and are not affected
+(Connect never used the Enterprise relay).
+

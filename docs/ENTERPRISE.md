@@ -6,6 +6,11 @@ you — the file's bytes never pass through a server. A small backend only
 handles accounts, presence ("who's online right now"), and an audit trail
 of what was sent, to whom, and whether it finished.
 
+> **Hosting:** the project's own Enterprise backend and relay on Render are
+> suspended (since 2026-11-17). The code and `render.yaml` still work; to
+> use Enterprise, deploy them yourself with a Postgres database. See
+> [DECISIONS.md, D28](DECISIONS.md).
+
 
 Two ways to use it, sharing one implementation underneath:
 
