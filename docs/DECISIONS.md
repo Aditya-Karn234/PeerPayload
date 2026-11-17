@@ -191,6 +191,10 @@ objects) inside Prisma's command-line tool. The fix exists only in Prisma
 configuration while running database migrations at deploy, so no outside
 input reaches it. Dismissed on GitHub as "vulnerable code not used";
 revisit with the next Prisma major upgrade.
+Update 2026-11-17: fixed after all by PR #7 (an automated suggestion,
+merged after testing): an `overrides` entry in `backend/package.json` puts
+deepmerge-ts 8.0.0 under Prisma 6; `prisma validate` and `generate` work
+with it. Drop the override on the next Prisma major upgrade.
 
 Also accepted: **minimatch** inside electron-builder's dependencies
 (moderate, glob-pattern denial of service). Only fixable by moving
